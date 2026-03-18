@@ -18,9 +18,11 @@ Requires:
 Commands:
   setup                  One-time: burn resident credential to YubiKey,
                          derive EC key, generate + save cert
-  sign-apk   SRC DST    Touch YubiKey → sign APK with apksigner (v2/v3)
-  sign-aab   SRC DST    Touch YubiKey → sign AAB with jarsigner (v1)
-  sign-both  APK AAB    Touch YubiKey ONCE → sign both artifacts
+  sign-apk      SRC DST    Touch YubiKey → sign APK with apksigner (v2/v3)
+  sign-aab      SRC DST    Touch YubiKey → sign AAB with jarsigner (v1)
+  sign-both     APK AAB    Touch YubiKey ONCE → sign both artifacts
+  export-pubkey             Print signing public key PEM to stdout (no touch needed)
+  export-pepk              Touch YubiKey → write ~/weatherstar-upload-key.zip for Google Play
 """
 
 import sys, json, base64, hashlib, os, stat, subprocess, shutil, tempfile, zipfile
@@ -447,6 +449,78 @@ def cmd_sign_both(apk_src: str, aab_src: str):
     return apk_dst, aab_dst
 
 
+def cmd_export_pubkey():
+    """Print the signing public key (PEM) to stdout. No YubiKey touch required."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    cert = _load_cert()
+    pub_pem = cert.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    sys.stdout.buffer.write(pub_pem)
+
+
+def cmd_export_pepk():
+    """
+    One YubiKey touch → derive signing key → CKM_RSA_AES_KEY_WRAP encrypt →
+    write ~/weatherstar-upload-key.zip for Google Play App Signing upload.
+
+    Binary layout of encryptedPrivateKey (matches pepk --rsa-aes-encryption):
+      [RSA-OAEP-SHA1 encrypted AES-256 key][RFC-5649 AES-WrapPad encrypted PKCS8 DER]
+    """
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, PrivateFormat, NoEncryption, load_pem_public_key,
+    )
+    from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.keywrap import aes_key_wrap_with_padding
+    from cryptography.hazmat.backends import default_backend
+
+    # ── Preconditions (checked before touching YubiKey) ───────────────────
+    if not GOOGLE_PUBKEY_FILE.exists():
+        sys.exit(f"Google encryption public key not found: {GOOGLE_PUBKEY_FILE}\n"
+                 f"Download it from Google Play Console → Setup → App signing.")
+    if UPLOAD_ZIP.exists():
+        sys.exit(f"Output file already exists: {UPLOAD_ZIP}\n"
+                 f"Move or delete it before running export-pepk.")
+
+    # ── Derive signing key (one touch) ────────────────────────────────────
+    print("Touch your YubiKey to export the encrypted signing key...", file=sys.stderr)
+    private_key = _derive_signing_key()
+
+    # ── Serialize private key as PKCS8 DER ────────────────────────────────
+    pkcs8_der = private_key.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+
+    # ── Load Google RSA public key ────────────────────────────────────────
+    rsa_pub = load_pem_public_key(GOOGLE_PUBKEY_FILE.read_bytes())
+
+    # ── Generate ephemeral 256-bit AES session key ─────────────────────────
+    aes_key = os.urandom(32)
+
+    # ── RSA-OAEP-SHA1 wrap the AES key ────────────────────────────────────
+    enc_aes = rsa_pub.encrypt(
+        aes_key,
+        asym_padding.OAEP(
+            mgf=asym_padding.MGF1(algorithm=hashes.SHA1()),
+            algorithm=hashes.SHA1(),
+            label=None,
+        ),
+    )
+
+    # ── RFC 5649 AES Key Wrap with Padding of PKCS8 DER ───────────────────
+    wrapped = aes_key_wrap_with_padding(aes_key, pkcs8_der, default_backend())
+
+    # ── Build encryptedPrivateKey blob ────────────────────────────────────
+    encrypted_private_key = enc_aes + wrapped
+
+    # ── Write ZIP ─────────────────────────────────────────────────────────
+    cert_pem = CERT_FILE.read_bytes()
+    with zipfile.ZipFile(UPLOAD_ZIP, 'w') as zf:
+        zf.writestr("encryptedPrivateKey", encrypted_private_key)
+        zf.writestr("certificate.pem", cert_pem)
+
+    print(f"  ✓ Encrypted key written: {UPLOAD_ZIP}", file=sys.stderr)
+    print(f"  Upload this ZIP to Google Play Console → Setup → App signing → Upload private key.",
+          file=sys.stderr)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 USAGE = f"""Usage: {sys.argv[0]} <command> [args]
@@ -455,6 +529,8 @@ USAGE = f"""Usage: {sys.argv[0]} <command> [args]
   sign-apk   <src> <dst>       Sign APK (one touch)
   sign-aab   <src> <dst>       Sign AAB (one touch)
   sign-both  <apk> <aab>       Sign APK + AAB (one touch total)
+  export-pubkey                Print signing public key PEM to stdout (no touch needed)
+  export-pepk                  Touch YubiKey → write ~/weatherstar-upload-key.zip
 """
 
 if __name__ == "__main__":
@@ -462,8 +538,10 @@ if __name__ == "__main__":
     if not args or args[0] in ("-h", "--help"):
         sys.exit(USAGE)
     cmd = args[0]
-    if cmd == "setup"      and len(args) == 1: cmd_setup()
-    elif cmd == "sign-apk" and len(args) == 3: cmd_sign_apk(args[1], args[2])
-    elif cmd == "sign-aab" and len(args) == 3: cmd_sign_aab(args[1], args[2])
-    elif cmd == "sign-both" and len(args) == 3: cmd_sign_both(args[1], args[2])
+    if cmd == "setup"          and len(args) == 1: cmd_setup()
+    elif cmd == "sign-apk"     and len(args) == 3: cmd_sign_apk(args[1], args[2])
+    elif cmd == "sign-aab"     and len(args) == 3: cmd_sign_aab(args[1], args[2])
+    elif cmd == "sign-both"    and len(args) == 3: cmd_sign_both(args[1], args[2])
+    elif cmd == "export-pubkey" and len(args) == 1: cmd_export_pubkey()
+    elif cmd == "export-pepk"   and len(args) == 1: cmd_export_pepk()
     else: sys.exit(USAGE)
