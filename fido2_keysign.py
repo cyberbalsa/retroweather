@@ -159,7 +159,14 @@ def _derive_hmac_once() -> bytes:
     """
     from fido2.ctap2 import Ctap2
     from fido2.ctap2.pin import ClientPin
-    from fido2.ctap.base import CtapError
+
+    try:                                    # location varies by fido2 version
+        from fido2.ctap2.base import CtapError
+    except ImportError:
+        try:
+            from fido2.ctap import CtapError
+        except ImportError:
+            from fido2.ctap2 import CtapError
 
     if not CRED_FILE.exists():
         sys.exit(f"No credential — run: python3 {sys.argv[0]} setup")
