@@ -97,7 +97,7 @@ Settings writes to `history.replaceState` (no page reload), then reloads only th
 ### Layout (Center Modal)
 - Semi-transparent dark backdrop covers full screen
 - Centered card with three collapsible sections:
-  1. **Location** — radio: "Auto-detect" / "Manual entry". Manual shows a text input (accepts city name or `lat,lon`). "Re-detect" button clears manual coords and re-runs the auto chain.
+  1. **Location** — radio: "Auto-detect" / "Manual entry". Manual shows a text input (accepts `lat,lon` decimal format only — no city name geocoding). "Re-detect" button clears manual coords and re-runs the auto chain.
   2. **Music** — on/off toggle, sequential/shuffle radio, volume slider (0–100%), currently playing track name display.
   3. **Display** — widescreen toggle (enforces 16:9 on phone), ws4kp skin/loop selector (populates from ws4kp's own param options).
 - **Apply** button: serializes state → URL params → `history.replaceState` → reloads ws4kp iframe
