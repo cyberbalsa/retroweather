@@ -62,13 +62,14 @@ let passed = 0;
     const url = 'file:///android_asset/ws4kp/index.html?settings-kiosk-checkbox=true';
     const updated = writeKioskParams(url, {
         music: false, volume: 0.5, shuffle: false,
-        locMode: 'auto', wide: true, units: 'si', speed: '1.25'
+        locMode: 'auto', wide: true, units: 'si', speed: '1.25', ipGeo: true
     });
     const p = new URL(updated).searchParams;
     assert.strictEqual(p.get('kiosk_music'), '0');
     assert.strictEqual(p.get('kiosk_vol'), '0.5');
     assert.strictEqual(p.get('settings-kiosk-checkbox'), 'true'); // preserved
     assert.strictEqual(p.get('settings-units-select'), 'si');
+    assert.strictEqual(p.get('kiosk_ipgeo'), '1');
     console.log('✓ writeKioskParams preserves existing params');
     passed++;
 }

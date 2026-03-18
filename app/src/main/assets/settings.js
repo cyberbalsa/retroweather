@@ -247,7 +247,6 @@
             if (ipGeoCheck) {
                 ipGeoCheck.checked = p.ipGeo;
                 fixedLocRow.style.display = p.ipGeo ? 'none' : '-webkit-box';
-                fixedLocRow.style.display = p.ipGeo ? 'none' : 'flex';
                 if (!p.ipGeo && p.latLon) {
                     try {
                         var coord = JSON.parse(decodeURIComponent(p.latLon));
@@ -303,7 +302,6 @@
         ipGeoEl.addEventListener('change', function () {
             var disabled = !ipGeoEl.checked;
             fixedRowEl.style.display = disabled ? '-webkit-box' : 'none';
-            fixedRowEl.style.display = disabled ? 'flex'        : 'none';
         });
 
         changeLocEl.addEventListener('click', function () {
