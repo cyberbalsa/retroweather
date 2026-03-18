@@ -155,18 +155,18 @@ def _derive_hmac_once() -> bytes:
     """
     Perform FIDO2 HMAC-secret assertion against the resident credential.
     Requires one physical touch. Returns 32 deterministic bytes.
-    Handles PUAT_REQUIRED by prompting for PIN automatically.
+
+    Does the ECDH key agreement manually so we don't depend on
+    ClientPin.get_shared_secret() which was removed in fido2 >= 1.0.
     """
     from fido2.ctap2 import Ctap2
-    from fido2.ctap2.pin import ClientPin
-
-    try:                                    # location varies by fido2 version
-        from fido2.ctap2.base import CtapError
-    except ImportError:
-        try:
-            from fido2.ctap import CtapError
-        except ImportError:
-            from fido2.ctap2 import CtapError
+    from cryptography.hazmat.primitives.asymmetric.ec import (
+        generate_private_key, SECP256R1, ECDH, EllipticCurvePublicNumbers,
+    )
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import hmac as crypto_hmac, hashes
+    from cryptography.hazmat.backends import default_backend
+    import hashlib
 
     if not CRED_FILE.exists():
         sys.exit(f"No credential — run: python3 {sys.argv[0]} setup")
@@ -176,54 +176,73 @@ def _derive_hmac_once() -> bytes:
     rp_id   = data.get("rp_id", RP_ID)
 
     ctap     = Ctap2(_find_device())
-    protocol = _best_pin_protocol(ctap)
-    cp       = ClientPin(ctap, protocol)
-    ka, shared = cp.get_shared_secret()
+    info     = ctap.get_info()
+    versions = info.pin_uv_protocols or [1]
+    prot_ver = 2 if 2 in versions else 1   # Security Key NFC fw 5.2.x → always 1
+    backend  = default_backend()
 
-    salt_enc  = protocol.encrypt(shared, HMAC_SALT)
-    salt_auth = protocol.authenticate(shared, salt_enc)
+    # ── Step 1: get device's ECDH public key via authenticatorClientPIN ────────
+    # subCommand 0x02 = getKeyAgreement; result key 0x01 = keyAgreement (COSE)
+    ka_resp  = ctap.client_pin(pin_uv_auth_protocol=prot_ver, sub_command=0x02)
+    dev_cose = ka_resp[0x01]
 
-    def _do_assertion(pin_uv_param=None, pin_uv_protocol=None):
-        print("Touch your YubiKey...", file=sys.stderr)
-        return ctap.get_assertion(
-            rp_id            = rp_id,
-            client_data_hash = CLIENT_HASH,
-            allow_list       = [{"type": "public-key", "id": cred_id}],
-            extensions       = {
-                "hmac-secret": {
-                    1: ka,
-                    2: salt_enc,
-                    3: salt_auth,
-                    4: protocol.VERSION,
-                }
-            },
-            options         = {"up": True},
-            pin_uv_param    = pin_uv_param,
-            pin_uv_protocol = pin_uv_protocol,
-        )
+    dev_pub = EllipticCurvePublicNumbers(
+        x=int.from_bytes(bytes(dev_cose[-2]), 'big'),
+        y=int.from_bytes(bytes(dev_cose[-3]), 'big'),
+        curve=SECP256R1(),
+    ).public_key(backend)
 
-    try:
-        result = _do_assertion()
-    except CtapError as e:
-        if e.code.value != 0x36:  # not PUAT_REQUIRED
-            raise
-        # PIN required for assertion — prompt and retry
-        import getpass
-        pin = getpass.getpass("YubiKey PIN: ", stream=sys.stderr)
-        import fido2.ctap2.pin as _pin_mod
-        try:
-            token = ClientPin(ctap, protocol).get_pin_token(
-                pin, _pin_mod.ClientPin.PERMISSION.GET_ASSERTION, rp_id)
-        except TypeError:
-            token = ClientPin(ctap, protocol).get_pin_token(pin)
-        uv_param = protocol.authenticate(token, CLIENT_HASH)
-        result = _do_assertion(pin_uv_param=uv_param, pin_uv_protocol=protocol.VERSION)
+    # ── Step 2: generate our ephemeral P-256 key pair ─────────────────────────
+    our_priv = generate_private_key(SECP256R1(), backend)
+    our_nums = our_priv.public_key().public_numbers()
+    our_cose = {
+        1: 2, 3: -7, -1: 1,
+        -2: our_nums.x.to_bytes(32, 'big'),
+        -3: our_nums.y.to_bytes(32, 'big'),
+    }
 
+    # ── Step 3: ECDH → shared session key ─────────────────────────────────────
+    Z = our_priv.exchange(ECDH(), dev_pub)
+    # PinProtocolV1 KDF: SHA-256 of the x-coordinate
+    shared = hashlib.sha256(Z).digest()   # 32 bytes
+
+    # ── Step 4: encrypt the fixed salt (AES-256-CBC, IV = 16 zero bytes) ──────
+    iv  = bytes(16)
+    enc = Cipher(algorithms.AES(shared), modes.CBC(iv), backend=backend).encryptor()
+    salt_enc = enc.update(HMAC_SALT) + enc.finalize()   # HMAC_SALT is 32 bytes
+
+    # ── Step 5: saltAuth = HMAC-SHA256(shared, saltEnc)[:16] (PinProtocol V1) ─
+    h = crypto_hmac.HMAC(shared, hashes.SHA256(), backend=backend)
+    h.update(salt_enc)
+    salt_auth = h.finalize()[:16]
+
+    # ── Step 6: get assertion with hmac-secret extension ──────────────────────
+    print("Touch your YubiKey...", file=sys.stderr)
+
+    result = ctap.get_assertion(
+        rp_id            = rp_id,
+        client_data_hash = CLIENT_HASH,
+        allow_list       = [{"type": "public-key", "id": cred_id}],
+        extensions       = {
+            "hmac-secret": {
+                1: our_cose,   # keyAgreement
+                2: salt_enc,   # saltEnc
+                3: salt_auth,  # saltAuth
+                4: prot_ver,   # pinUvAuthProtocol
+            }
+        },
+        options={"up": True},
+    )
+
+    # ── Step 7: decrypt the HMAC-secret output ────────────────────────────────
     enc_out = (result.auth_data.extensions or {}).get("hmac-secret")
     if not enc_out:
-        sys.exit("YubiKey did not return HMAC-secret. Was the credential created with hmac-secret enabled?")
+        sys.exit("YubiKey did not return HMAC-secret. "
+                 "Was the credential created with hmac-secret enabled?")
 
-    return protocol.decrypt(shared, enc_out)  # 32 bytes
+    dec    = Cipher(algorithms.AES(shared), modes.CBC(iv), backend=backend).decryptor()
+    secret = (dec.update(bytes(enc_out)) + dec.finalize())[:32]
+    return secret
 
 
 def _derive_signing_key():
