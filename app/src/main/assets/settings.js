@@ -223,7 +223,7 @@
             for (var i = 0; i < locRadios.length; i++) {
                 locRadios[i].checked = locRadios[i].value === p.locMode;
             }
-            manualRow.style.display = (p.locMode === 'manual') ? 'flex' : 'none';
+            manualRow.style.display = (p.locMode === 'manual') ? '-webkit-box' : 'none';
             if (p.latLon) {
                 try {
                     var coord = JSON.parse(decodeURIComponent(p.latLon));
@@ -264,7 +264,7 @@
         for (var li = 0; li < locRadiosAll.length; li++) {
             locRadiosAll[li].addEventListener('change', function () {
                 var ch = findCheckedRadio('k-loc');
-                manualRow.style.display = (ch && ch.value === 'manual') ? 'flex' : 'none';
+                manualRow.style.display = (ch && ch.value === 'manual') ? '-webkit-box' : 'none';
             });
         }
 
