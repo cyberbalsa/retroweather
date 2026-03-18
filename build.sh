@@ -65,6 +65,15 @@ if [[ ! -x "$GRADLE" ]]; then
     success "Gradle 8.12 installed at $GRADLE_HOME"
 fi
 
+# ── Android SDK ───────────────────────────────────────────────────────────────
+if [[ -z "${ANDROID_HOME:-}" ]]; then
+    for candidate in "$HOME/android-sdk" "$HOME/Android/Sdk" "$HOME/Android/sdk" /opt/android-sdk; do
+        [[ -d "$candidate/build-tools" ]] && { export ANDROID_HOME="$candidate"; break; }
+    done
+fi
+[[ -n "${ANDROID_HOME:-}" ]] || die "Android SDK not found. Set ANDROID_HOME or install via ./sign-release.sh --setup"
+info "Using Android SDK: $ANDROID_HOME"
+
 info "Building release APK + AAB (targetSdk 35)..."
 "$GRADLE" assembleRelease bundleRelease
 
