@@ -6,3 +6,4 @@ app/build/
 local.properties
 app/src/main/assets/ws4kp/
 .superpowers/
+node_modules/
