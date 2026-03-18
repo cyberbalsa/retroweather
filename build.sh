@@ -19,7 +19,7 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
 cd "$SCRIPT_DIR"
 
-# ── Ensure Java (required for Gradle wrapper bootstrap) ──────────────────────
+# ── Ensure Java ───────────────────────────────────────────────────────────────
 if ! command -v java &>/dev/null; then
     info "Java not found — installing..."
     if command -v dnf5 &>/dev/null; then
@@ -29,7 +29,7 @@ if ! command -v java &>/dev/null; then
     elif command -v apt-get &>/dev/null; then
         sudo apt-get install -y default-jdk-headless
     else
-        die "Java not found and no supported package manager available. Install a JDK manually."
+        die "Java not found and no supported package manager. Install a JDK manually."
     fi
 fi
 
@@ -37,14 +37,23 @@ fi
 command -v gh &>/dev/null || die "gh not installed. Run: ./sign-release.sh --setup"
 gh auth status &>/dev/null || die "Not logged in to GitHub. Run: gh auth login"
 
-# ── Download Gradle distribution if not already cached ───────────────────────
-if ! ./gradlew --version &>/dev/null; then
-    info "Downloading Gradle distribution..."
-    ./gradlew --version
+# ── Ensure Gradle 8.12 ────────────────────────────────────────────────────────
+GRADLE_HOME="$HOME/.local/gradle-8.12"
+GRADLE="$GRADLE_HOME/bin/gradle"
+if [[ ! -x "$GRADLE" ]]; then
+    info "Downloading Gradle 8.12..."
+    tmp_zip=$(mktemp --suffix=.zip)
+    curl -fL "https://services.gradle.org/distributions/gradle-8.12-bin.zip" -o "$tmp_zip"
+    mkdir -p "$HOME/.local"
+    unzip -q "$tmp_zip" -d "$HOME/.local"
+    mv "$HOME/.local/gradle-8.12" "$GRADLE_HOME" 2>/dev/null || true
+    rm -f "$tmp_zip"
+    [[ -x "$GRADLE" ]] || die "Gradle download failed."
+    success "Gradle 8.12 installed at $GRADLE_HOME"
 fi
 
 info "Building release APK + AAB (targetSdk 35)..."
-./gradlew assembleRelease bundleRelease
+"$GRADLE" assembleRelease bundleRelease
 
 apk="app/build/outputs/apk/release/app-release-unsigned.apk"
 aab="app/build/outputs/bundle/release/app-release.aab"
