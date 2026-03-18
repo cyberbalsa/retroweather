@@ -132,7 +132,7 @@
             style.type = 'text/css';
             style.appendChild(document.createTextNode(
                 '#kiosk-loc-backdrop{'
-                + 'display:-webkit-box;display:-webkit-flex;display:flex;'
+                + 'display:-webkit-box!important;display:-webkit-flex!important;display:flex!important;'
                 + 'position:fixed;top:0;left:0;right:0;bottom:0;'
                 + 'background:rgba(0,0,0,0.85);z-index:100000;'
                 + '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
