@@ -48,7 +48,11 @@ jobs:
 
       - name: Add Android build-tools to PATH
         run: |
-          BUILD_TOOLS_DIR="$(ls -d "$ANDROID_SDK_ROOT/build-tools"/*/ | sort -V | tail -1)"
+          BUILD_TOOLS_DIR="$(ls -d "$ANDROID_SDK_ROOT/build-tools"/*/ 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$BUILD_TOOLS_DIR" ]; then
+            echo "::error::Could not locate Android build-tools under ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+            exit 1
+          fi
           echo "$BUILD_TOOLS_DIR" >> "$GITHUB_PATH"
 
       - name: Decode keystore
