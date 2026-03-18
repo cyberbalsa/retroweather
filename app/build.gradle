@@ -3,6 +3,9 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def gitCommitCount = ['git', 'rev-list', '--count', 'HEAD'].execute().text.trim().toInteger()
+def gitCommitHash  = ['git', 'rev-parse', '--short', 'HEAD'].execute().text.trim()
+
 android {
     namespace 'com.weatherstartv'
     compileSdk 35
@@ -11,8 +14,8 @@ android {
         applicationId "com.weatherstartv"
         minSdk 21   // Android 5.0 Lollipop (play-services-location 21.x requires API 21)
         targetSdk 35
-        versionCode 2
-        versionName "1.1"
+        versionCode gitCommitCount
+        versionName gitCommitHash
     }
 
     buildTypes {
