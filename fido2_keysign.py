@@ -1,75 +1,305 @@
 #!/usr/bin/env python3
 """
-fido2_keysign.py — Derive Android signing password from YubiKey FIDO2 HMAC-secret.
+fido2_keysign.py — YubiKey-backed Android signing tool.
 
-Requires: python3-fido2 >= 1.0   (dnf install python3-fido2)
-Works with: YubiKey Security Key NFC, firmware 5.2+
+The FIDO2 credential is stored as a RESIDENT KEY on the YubiKey itself
+(uses one of its on-device slots). On every signing run the YubiKey's
+internal HMAC-secret is used to derive the EC P-256 private key — it is
+NEVER written to disk. Only the self-signed X.509 certificate (public
+info) is stored.
 
-How it works:
-  The YubiKey computes HMAC-SHA256(device_secret, salt) where device_secret is
-  burned in at manufacture and never leaves the key. With a fixed salt every
-  invocation returns the same 32-byte secret — deterministic, hardware-bound,
-  touch-required. That secret is used as the Android keystore password.
+  Resident key on YubiKey  →  HMAC-secret  →  EC P-256 private key
+                                                      ↓
+                                              signs APK / AAB
+
+Requires:
+  dnf install python3-fido2 python3-cryptography
 
 Commands:
-  setup   One-time: create FIDO2 credential, save to CRED_FILE
-  derive  Touch YubiKey → print 64-char hex password to stdout
+  setup                  One-time: burn resident credential to YubiKey,
+                         derive EC key, generate + save cert
+  sign-apk   SRC DST    Touch YubiKey → sign APK with apksigner (v2/v3)
+  sign-aab   SRC DST    Touch YubiKey → sign AAB with jarsigner (v1)
+  sign-both  APK AAB    Touch YubiKey ONCE → sign both artifacts
 """
 
-import sys
-import json
-import base64
-import hashlib
+import sys, json, base64, hashlib, os, stat, subprocess, shutil, tempfile
 from pathlib import Path
 
+# ── Paths & constants ─────────────────────────────────────────────────────────
+
 CRED_FILE   = Path.home() / ".android" / "weatherstar-fido2.json"
+CERT_FILE   = Path.home() / ".android" / "weatherstar-signing-cert.pem"
+KEY_ALIAS   = "weatherstarkiosk"
 RP_ID       = "weatherstarkiosk.signing"
 
-# Both values are fixed so the derived password is deterministic.
-# Security comes from the YubiKey's internal device secret, not these constants.
+# Fixed so derived key is deterministic (security is in the YubiKey device secret)
 CLIENT_HASH = hashlib.sha256(b"weatherstarkiosk:android:client-data:v1").digest()
-HMAC_SALT   = hashlib.sha256(b"weatherstarkiosk:android:hmac-salt:v1").digest()  # 32 bytes
+HMAC_SALT   = hashlib.sha256(b"weatherstarkiosk:android:hmac-salt:v1").digest()
+
+# NIST P-256 group order
+P256_ORDER  = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── EC key derivation ─────────────────────────────────────────────────────────
 
-def find_device():
+def _hmac_to_ec_key(hmac_bytes: bytes):
+    """
+    Derive a deterministic EC P-256 private key from 32 bytes of HMAC output.
+    Uses HKDF so the full entropy of hmac_bytes feeds into a well-formed key.
+    Key lives only in memory — never written to disk by this function.
+    """
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key_bytes = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"weatherstarkiosk:ec:v1",
+        info=b"android-signing-ec-key",
+    ).derive(hmac_bytes)
+
+    # d must be in [1, n-1]; probability of d=0 is negligible
+    d = int.from_bytes(key_bytes, 'big') % P256_ORDER or 1
+    return ec.derive_private_key(d, ec.SECP256R1())
+
+
+def _make_cert(private_key):
+    """Self-signed X.509 cert for private_key. Valid 10 years."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.x509.oid import NameOID
+    import datetime
+
+    name = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME,        "WeatherStar Kiosk"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME,  "cyberbalsa"),
+        x509.NameAttribute(NameOID.COUNTRY_NAME,       "US"),
+    ])
+    now = datetime.datetime.utcnow()
+    return (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(private_key, hashes.SHA256())
+    )
+
+
+# ── FIDO2 helpers ─────────────────────────────────────────────────────────────
+
+def _find_device():
     from fido2.hid import CtapHidDevice
     devs = list(CtapHidDevice.list_devices())
     if not devs:
-        sys.exit("No FIDO2 device found. Plug in your YubiKey.")
+        sys.exit("No FIDO2 device found — plug in your YubiKey.")
     return devs[0]
 
 
-def get_pin_protocol(ctap):
-    """Return the best available PinProtocol instance."""
+def _best_pin_protocol(ctap):
     from fido2.ctap2.pin import PinProtocolV1, PinProtocolV2
-    info = ctap.get_info()
-    versions = info.pin_uv_auth_protocols or [1]
+    versions = ctap.get_info().pin_uv_auth_protocols or [1]
     return PinProtocolV2() if 2 in versions else PinProtocolV1()
+
+
+def _derive_hmac_once() -> bytes:
+    """
+    Perform FIDO2 HMAC-secret assertion against the resident credential.
+    Requires one physical touch. Returns 32 deterministic bytes.
+    """
+    from fido2.ctap2 import Ctap2
+    from fido2.ctap2.pin import ClientPin
+
+    if not CRED_FILE.exists():
+        sys.exit(f"No credential — run: python3 {sys.argv[0]} setup")
+
+    data    = json.loads(CRED_FILE.read_text())
+    cred_id = base64.b64decode(data["credential_id"])
+    rp_id   = data.get("rp_id", RP_ID)
+
+    ctap     = Ctap2(_find_device())
+    protocol = _best_pin_protocol(ctap)
+    cp       = ClientPin(ctap, protocol)
+    ka, shared = cp.get_shared_secret()
+
+    salt_enc  = protocol.encrypt(shared, HMAC_SALT)
+    salt_auth = protocol.authenticate(shared, salt_enc)
+
+    print("Touch your YubiKey...", file=sys.stderr)
+    result = ctap.get_assertion(
+        rp_id            = rp_id,
+        client_data_hash = CLIENT_HASH,
+        allow_list       = [{"type": "public-key", "id": cred_id}],
+        extensions       = {
+            "hmac-secret": {
+                1: ka,              # keyAgreement   (our ECDH public key)
+                2: salt_enc,        # saltEnc         (salt encrypted with shared key)
+                3: salt_auth,       # saltAuth        (MAC over saltEnc)
+                4: protocol.VERSION # pinUvAuthProtocol
+            }
+        },
+        options={"up": True},
+    )
+
+    enc_out = (result.auth_data.extensions or {}).get("hmac-secret")
+    if not enc_out:
+        sys.exit("YubiKey did not return HMAC-secret. Was the credential created with hmac-secret enabled?")
+
+    return protocol.decrypt(shared, enc_out)  # 32 bytes
+
+
+def _derive_signing_key():
+    """One touch → EC P-256 private key in memory only."""
+    return _hmac_to_ec_key(_derive_hmac_once())
+
+
+# ── Secure temp key file ──────────────────────────────────────────────────────
+
+class _TempKey:
+    """
+    Write private key PEM to a secure temp file (0600, on /dev/shm if
+    available so it never hits the disk), then shred on exit.
+    """
+    def __init__(self, private_key):
+        from cryptography.hazmat.primitives import serialization
+        tmpdir = '/dev/shm' if os.path.isdir('/dev/shm') else None
+        fd, self.path = tempfile.mkstemp(suffix='.pem', dir=tmpdir)
+        os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            ))
+
+    def __enter__(self): return self.path
+
+    def __exit__(self, *_):
+        try:
+            with open(self.path, 'r+b') as f:
+                f.write(os.urandom(os.path.getsize(self.path)))
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+
+
+class _TempKeystore:
+    """
+    Build an in-memory PKCS12 keystore from a derived key + stored cert,
+    write it to /dev/shm (0600), return path + password, shred on exit.
+    """
+    def __init__(self, private_key):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import pkcs12
+
+        self.password = base64.b64encode(os.urandom(18)).decode()
+        tmpdir = '/dev/shm' if os.path.isdir('/dev/shm') else None
+        fd, self.path = tempfile.mkstemp(suffix='.p12', dir=tmpdir)
+        os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
+
+        p12 = pkcs12.serialize_key_and_certificates(
+            name=KEY_ALIAS.encode(),
+            key=private_key,
+            cert=_load_cert(),
+            cas=None,
+            encryption_algorithm=serialization.BestAvailableEncryption(
+                self.password.encode()
+            ),
+        )
+        with os.fdopen(fd, 'wb') as f:
+            f.write(p12)
+
+    def __enter__(self): return self.path, self.password
+
+    def __exit__(self, *_):
+        try:
+            with open(self.path, 'r+b') as f:
+                f.write(os.urandom(os.path.getsize(self.path)))
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+
+
+# ── Signing helpers ───────────────────────────────────────────────────────────
+
+def _find_apksigner():
+    path = shutil.which('apksigner')
+    if path: return path
+    sdk = os.environ.get('ANDROID_HOME', os.path.expanduser('~/Android/Sdk'))
+    bt  = os.path.join(sdk, 'build-tools')
+    if os.path.isdir(bt):
+        ver = sorted(os.listdir(bt))[-1]
+        p   = os.path.join(bt, ver, 'apksigner')
+        if os.access(p, os.X_OK): return p
+    return None
+
+
+def _load_cert():
+    from cryptography import x509
+    if not CERT_FILE.exists():
+        sys.exit(f"Certificate not found: {CERT_FILE}\nRun: python3 {sys.argv[0]} setup")
+    return x509.load_pem_x509_certificate(CERT_FILE.read_bytes())
+
+
+def _do_sign_apk(private_key, src: str, dst: str):
+    apksigner = _find_apksigner()
+    if not apksigner:
+        print("apksigner not found — falling back to JAR (v1) signing.", file=sys.stderr)
+        _do_sign_aab(private_key, src, dst)
+        return
+    with _TempKey(private_key) as key_path:
+        subprocess.run([
+            apksigner, 'sign',
+            '--key', key_path,
+            '--cert', str(CERT_FILE),
+            '--out', dst,
+            src,
+        ], check=True)
+    subprocess.run([apksigner, 'verify', '--print-certs', dst], check=True)
+    print(f"✓ APK signed: {os.path.basename(dst)}", file=sys.stderr)
+
+
+def _do_sign_aab(private_key, src: str, dst: str):
+    shutil.copy2(src, dst)
+    with _TempKeystore(private_key) as (ks_path, ks_pass):
+        subprocess.run([
+            'jarsigner',
+            '-keystore', ks_path,
+            '-storetype', 'pkcs12',
+            '-storepass', ks_pass,
+            '-keypass',   ks_pass,
+            '-tsa', 'http://timestamp.digicert.com',
+            dst, KEY_ALIAS,
+        ], check=True)
+    subprocess.run(['jarsigner', '-verify', dst], check=True)
+    print(f"✓ AAB signed: {os.path.basename(dst)}", file=sys.stderr)
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 def cmd_setup():
     from fido2.ctap2 import Ctap2
+    from cryptography.hazmat.primitives import serialization
 
-    dev  = find_device()
-    ctap = Ctap2(dev)
+    ctap = Ctap2(_find_device())
     info = ctap.get_info()
 
     if not info.extensions or "hmac-secret" not in info.extensions:
-        sys.exit("This YubiKey does not support the hmac-secret extension.\n"
-                 "Requires Security Key firmware 5.2+ or YubiKey 5 series.")
+        sys.exit("YubiKey does not support hmac-secret. Requires Security Key firmware 5.2+.")
 
-    print("Touch your YubiKey to create the signing credential...", file=sys.stderr)
-
+    print("Step 1/2 — Touch YubiKey to burn resident credential...", file=sys.stderr)
     mc = ctap.make_credential(
-        client_data_hash=CLIENT_HASH,
-        rp={"id": RP_ID, "name": "WeatherStar Kiosk Signing"},
-        user={"id": b"wsk-signer", "name": "signer", "displayName": "Signer"},
-        key_params=[{"type": "public-key", "alg": -7}],  # ES256
-        extensions={"hmac-secret": True},
+        client_data_hash = CLIENT_HASH,
+        rp   = {"id": RP_ID, "name": "WeatherStar Kiosk Signing"},
+        user = {"id": b"wsk-signer", "name": "signer", "displayName": "Signer"},
+        key_params = [{"type": "public-key", "alg": -7}],   # ES256
+        extensions = {"hmac-secret": True},
+        options    = {"rk": True},    # RESIDENT — stored on YubiKey
     )
 
     cred_id = mc.auth_data.credential_data.credential_id
@@ -78,70 +308,62 @@ def cmd_setup():
         "credential_id": base64.b64encode(cred_id).decode(),
         "rp_id": RP_ID,
     }, indent=2))
-    print(f"✓ Credential saved: {CRED_FILE}", file=sys.stderr)
-    print("  Keep this file — it is needed to unlock the signing key.", file=sys.stderr)
+    os.chmod(CRED_FILE, stat.S_IRUSR | stat.S_IWUSR)
+    print(f"  Resident credential stored on YubiKey.", file=sys.stderr)
+    print(f"  Credential ID backed up to: {CRED_FILE}", file=sys.stderr)
+
+    print("Step 2/2 — Touch YubiKey to derive signing key + create certificate...", file=sys.stderr)
+    private_key = _derive_signing_key()
+    cert        = _make_cert(private_key)
+
+    CERT_FILE.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    os.chmod(CERT_FILE, 0o644)
+    print(f"  Certificate saved: {CERT_FILE}", file=sys.stderr)
+
+    print("", file=sys.stderr)
+    print("  ✓ Setup complete.", file=sys.stderr)
+    print("  Private key: NEVER stored — derived from YubiKey on every signing run.", file=sys.stderr)
+    print(f"  Back up {CRED_FILE} and {CERT_FILE}.", file=sys.stderr)
 
 
-def cmd_derive():
-    from fido2.ctap2 import Ctap2
-    from fido2.ctap2.pin import ClientPin
+def cmd_sign_apk(src: str, dst: str):
+    _do_sign_apk(_derive_signing_key(), src, dst)
 
-    if not CRED_FILE.exists():
-        sys.exit(f"No credential found. Run first: python3 {sys.argv[0]} setup")
 
-    data    = json.loads(CRED_FILE.read_text())
-    cred_id = base64.b64decode(data["credential_id"])
-    rp_id   = data.get("rp_id", RP_ID)
+def cmd_sign_aab(src: str, dst: str):
+    _do_sign_aab(_derive_signing_key(), src, dst)
 
-    dev      = find_device()
-    ctap     = Ctap2(dev)
-    protocol = get_pin_protocol(ctap)
 
-    # HMAC-secret requires ECDH key agreement (same channel as PIN UV,
-    # but we use it only to encrypt the HMAC salt — no PIN needed).
-    client_pin              = ClientPin(ctap, protocol)
-    key_agreement, shared   = client_pin.get_shared_secret()
+def cmd_sign_both(apk_src: str, aab_src: str):
+    """Single YubiKey touch → derive key once → sign APK and AAB."""
+    base  = Path(apk_src).stem.replace('-unsigned', '')
+    d     = Path(apk_src).parent
+    apk_dst = str(d / f"{base}-signed.apk")
+    aab_dst = str(Path(aab_src).parent / f"{Path(aab_src).stem}-signed.aab")
 
-    salt_enc  = protocol.encrypt(shared, HMAC_SALT)
-    salt_auth = protocol.authenticate(shared, salt_enc)
-
-    allow_list = [{"type": "public-key", "id": cred_id}]
-
-    print("Touch your YubiKey to authorize signing...", file=sys.stderr)
-
-    result = ctap.get_assertion(
-        rp_id=rp_id,
-        client_data_hash=CLIENT_HASH,
-        allow_list=allow_list,
-        extensions={
-            "hmac-secret": {
-                1: key_agreement,   # keyAgreement  (our ECDH public key)
-                2: salt_enc,        # saltEnc        (encrypted HMAC salt)
-                3: salt_auth,       # saltAuth       (MAC over saltEnc)
-                4: protocol.VERSION,# pinUvAuthProtocol
-            }
-        },
-        options={"up": True},
-    )
-
-    raw_ext = result.auth_data.extensions or {}
-    enc_out = raw_ext.get("hmac-secret")
-    if not enc_out:
-        sys.exit("YubiKey did not return an HMAC-secret. "
-                 "Ensure the credential was created with hmac-secret enabled.")
-
-    secret = protocol.decrypt(shared, enc_out)  # 32 bytes
-    # Print as 64-char hex to stdout (used as keystore password by sign-release.sh)
-    print(secret.hex())
+    key = _derive_signing_key()   # ONE touch
+    _do_sign_apk(key, apk_src, apk_dst)
+    _do_sign_aab(key, aab_src, aab_dst)
+    return apk_dst, aab_dst
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-COMMANDS = {"setup": cmd_setup, "derive": cmd_derive}
+USAGE = f"""Usage: {sys.argv[0]} <command> [args]
+
+  setup                        Burn resident credential to YubiKey, create cert
+  sign-apk   <src> <dst>       Sign APK (one touch)
+  sign-aab   <src> <dst>       Sign AAB (one touch)
+  sign-both  <apk> <aab>       Sign APK + AAB (one touch total)
+"""
 
 if __name__ == "__main__":
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "derive"
-    fn  = COMMANDS.get(cmd)
-    if not fn:
-        sys.exit(f"Usage: {sys.argv[0]} [setup|derive]")
-    fn()
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        sys.exit(USAGE)
+    cmd = args[0]
+    if cmd == "setup"      and len(args) == 1: cmd_setup()
+    elif cmd == "sign-apk" and len(args) == 3: cmd_sign_apk(args[1], args[2])
+    elif cmd == "sign-aab" and len(args) == 3: cmd_sign_aab(args[1], args[2])
+    elif cmd == "sign-both" and len(args) == 3: cmd_sign_both(args[1], args[2])
+    else: sys.exit(USAGE)
