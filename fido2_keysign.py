@@ -438,9 +438,12 @@ def _find_apksigner():
     if path: return path
     sdk_candidates = [
         os.environ.get('ANDROID_HOME', ''),
+        os.environ.get('ANDROID_SDK_ROOT', ''),
         os.path.expanduser('~/android-sdk'),
         os.path.expanduser('~/Android/Sdk'),
         os.path.expanduser('~/Android/sdk'),
+        '/opt/android-sdk',
+        '/usr/lib/android-sdk',
     ]
     for sdk in sdk_candidates:
         if not sdk: continue
@@ -499,35 +502,76 @@ def _do_sign_aab(private_key, src: str, dst: str):
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+def _install_android_sdk_build_tools():
+    """Download Android cmdline-tools and use sdkmanager to install build-tools."""
+    import urllib.request, zipfile as _zf
+    sdk_root = Path.home() / 'android-sdk'
+    cmdline  = sdk_root / 'cmdline-tools' / 'latest'
+    sdk_root.mkdir(parents=True, exist_ok=True)
+
+    if not (cmdline / 'bin' / 'sdkmanager').exists():
+        url = ('https://dl.google.com/android/repository/'
+               'commandlinetools-linux-14742923_latest.zip')
+        tmp = sdk_root / '_cmdline-tools.zip'
+        print(f"  Downloading Android command-line tools...", file=sys.stderr)
+        urllib.request.urlretrieve(url, tmp)
+        with _zf.ZipFile(tmp) as zf:
+            zf.extractall(sdk_root / 'cmdline-tools')
+        # Google zips as cmdline-tools/; rename to latest
+        extracted = sdk_root / 'cmdline-tools' / 'cmdline-tools'
+        if extracted.exists():
+            extracted.rename(cmdline)
+        tmp.unlink(missing_ok=True)
+        print("  Android cmdline-tools installed.", file=sys.stderr)
+
+    sdkmanager = str(cmdline / 'bin' / 'sdkmanager')
+    if not os.access(sdkmanager, os.X_OK):
+        sys.exit(f"ERROR: sdkmanager not executable at {sdkmanager}")
+
+    env = os.environ.copy()
+    env['ANDROID_HOME'] = str(sdk_root)
+
+    # Accept all licenses non-interactively
+    subprocess.run(
+        [sdkmanager, '--licenses'],
+        input=b'y\n' * 20,
+        env=env,
+        capture_output=True,
+    )
+    print("  Installing Android build-tools (this may take a minute)...", file=sys.stderr)
+    r = subprocess.run(
+        [sdkmanager, 'build-tools;36.0.0'],
+        env=env,
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        sys.exit(
+            "ERROR: sdkmanager failed:\n" + r.stderr.decode(errors='replace')
+        )
+    if not _find_apksigner():
+        sys.exit(
+            f"ERROR: apksigner still not found after SDK install.\n"
+            f"Expected it at {sdk_root}/build-tools/36.0.0/apksigner"
+        )
+    print(f"  apksigner installed via Android SDK at {sdk_root}", file=sys.stderr)
+
+
 def _ensure_apksigner():
     """Install apksigner if not already present."""
     if _find_apksigner():
         return   # already installed
 
-    print("apksigner not found — attempting to install...", file=sys.stderr)
-
-    # Try whichever package manager is available
+    # On Debian/Ubuntu, apksigner is a standalone apt package.
     if shutil.which('apt-get'):
-        pkg_cmd = ['sudo', 'apt-get', 'install', '-y', 'apksigner']
-    elif shutil.which('dnf5'):
-        pkg_cmd = ['sudo', 'dnf5', 'install', '-y', 'apksigner']
-    elif shutil.which('dnf'):
-        pkg_cmd = ['sudo', 'dnf', 'install', '-y', 'apksigner']
-    else:
-        sys.exit(
-            "ERROR: apksigner not found and no supported package manager available.\n"
-            "Install it manually (e.g. via Android SDK build-tools) and ensure it is on PATH."
-        )
+        print("apksigner not found — installing via apt-get...", file=sys.stderr)
+        r = subprocess.run(['sudo', 'apt-get', 'install', '-y', 'apksigner'], capture_output=True)
+        if r.returncode == 0 and _find_apksigner():
+            print("  apksigner installed.", file=sys.stderr)
+            return
 
-    r = subprocess.run(pkg_cmd, capture_output=True)
-    if r.returncode != 0:
-        sys.exit(
-            "ERROR: package manager install failed:\n"
-            + r.stderr.decode(errors='replace')
-        )
-    if not _find_apksigner():
-        sys.exit("ERROR: apksigner still not found after install.")
-    print("  apksigner installed.", file=sys.stderr)
+    # On Fedora and other RPM-based systems, apksigner is not a standalone package.
+    # Bootstrap via Android SDK command-line tools → sdkmanager → build-tools.
+    _install_android_sdk_build_tools()
 
 
 def cmd_setup():
