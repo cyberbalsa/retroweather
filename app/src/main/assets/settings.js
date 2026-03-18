@@ -39,7 +39,9 @@
         + 'padding:10px 24px;font-size:0.95em;cursor:pointer;width:100%;margin-top:8px;}'
         + '#kiosk-apply:focus{background:#2a7abf;outline:2px solid #7cb9e8;}'
         + '.k-btn-sm{font-size:0.8em;padding:4px 10px;background:#1e3a5f;'
-        + 'border:1px solid #3a6a9f;border-radius:4px;color:#e0e8f0;cursor:pointer;}';
+        + 'border:1px solid #3a6a9f;border-radius:4px;color:#e0e8f0;cursor:pointer;}'
+        + '.k-link{color:#7cb9e8;}'
+        + '#k-fixed-loc-display{font-size:0.8em;color:#9ab;-webkit-box-flex:1;-webkit-flex:1;flex:1;}';
 
     var HTML = '<div id="kiosk-backdrop">'
         + '<div id="kiosk-modal" role="dialog">'
@@ -74,6 +76,24 @@
         + '<option value="0.5">Very Fast</option><option value="0.75">Fast</option>'
         + '<option value="1.0">Normal</option><option value="1.25">Slow</option><option value="1.5">Very Slow</option>'
         + '</select></div>'
+        + '</div>'
+        + '<div class="k-section"><h3>About</h3>'
+        + '<p style="font-size:0.8em;margin:0 0 6px;">'
+        + '<a href="https://github.com/cyberbalsa/retroweather" target="_blank" class="k-link">WeatherStar Kiosk</a>'
+        + ' &mdash; MIT License</p>'
+        + '<p style="font-size:0.8em;margin:0 0 12px;">'
+        + 'Based on <a href="https://github.com/netbymatt/ws4kp" target="_blank" class="k-link">WeatherStar 4000+</a>'
+        + ' by netbymatt</p>'
+        + '<p style="font-size:0.8em;color:#9ab;margin:0 0 8px;">'
+        + 'IP geolocation (GPS fallback): ipinfo.io, ipapi.co</p>'
+        + '<div class="k-row">'
+        + '<label for="k-ipgeo">Enable IP geolocation</label>'
+        + '<input type="checkbox" id="k-ipgeo" tabindex="0">'
+        + '</div>'
+        + '<div id="k-fixed-loc-row" class="k-row" style="display:none">'
+        + '<span id="k-fixed-loc-display">Fixed: none</span>'
+        + '<button id="k-change-loc" class="k-btn-sm" tabindex="0">Change</button>'
+        + '</div>'
         + '</div>'
         + '<button id="kiosk-apply" tabindex="0">Apply</button>'
         + '</div></div>';
@@ -144,7 +164,8 @@
             latLon:  getParam('latLon') || '',
             wide:    getParam('settings-wide-checkbox') === 'true',
             units:   getParam('settings-units-select') || 'us',
-            speed:   getParam('settings-speed-select') || '1.0'
+            speed:   getParam('settings-speed-select') || '1.0',
+            ipGeo:   getParam('kiosk_ipgeo') !== '0'   // absent = enabled (default)
         };
     }
 
@@ -156,12 +177,20 @@
         setParam('settings-wide-checkbox', values.wide    ? 'true' : 'false');
         setParam('settings-units-select',  values.units);
         setParam('settings-speed-select',  values.speed);
+        setParam('kiosk_ipgeo',            values.ipGeo   ? '1' : '0');
 
         if (values.locMode === 'manual' && values.latLon && window.applyManualLocation) {
             window.applyManualLocation(values.latLon);
             return;
         }
-        if (values.locMode === 'auto') removeParam('latLon');
+        // Only clear saved location when re-enabling IP geo (auto mode).
+        // When IP geo is disabled, latLon is the fixed/hard-set location — preserve it.
+        if (values.locMode === 'auto' && values.ipGeo) {
+            removeParam('latLon');
+            if (window.Android && window.Android.clearSavedLocation) {
+                window.Android.clearSavedLocation();
+            }
+        }
         window.location.reload();
     }
 
@@ -211,6 +240,25 @@
             unitsSelect.value  = p.units;
             speedSelect.value  = p.speed;
             if (window.musicGetCurrentTitle) trackLabel.textContent = window.musicGetCurrentTitle();
+
+            var ipGeoCheck   = document.getElementById('k-ipgeo');
+            var fixedLocRow  = document.getElementById('k-fixed-loc-row');
+            var fixedLocDisp = document.getElementById('k-fixed-loc-display');
+            if (ipGeoCheck) {
+                ipGeoCheck.checked = p.ipGeo;
+                fixedLocRow.style.display = p.ipGeo ? 'none' : '-webkit-box';
+                fixedLocRow.style.display = p.ipGeo ? 'none' : 'flex';
+                if (!p.ipGeo && p.latLon) {
+                    try {
+                        var coord = JSON.parse(decodeURIComponent(p.latLon));
+                        if (coord && coord.lat !== undefined && coord.lon !== undefined) {
+                            fixedLocDisp.textContent = 'Fixed: '
+                                + parseFloat(coord.lat).toFixed(4) + ', '
+                                + parseFloat(coord.lon).toFixed(4);
+                        }
+                    } catch (e) { fixedLocDisp.textContent = 'Fixed: none'; }
+                }
+            }  // end if (ipGeoCheck)
         }
 
         var locRadiosAll = document.querySelectorAll('input[name="k-loc"]');
@@ -239,13 +287,30 @@
                 latLon:  latLonInput.value.trim(),
                 wide:    wideCheck.checked,
                 units:   unitsSelect.value,
-                speed:   speedSelect.value
+                speed:   speedSelect.value,
+                ipGeo:   document.getElementById('k-ipgeo').checked
             });
         });
 
         redetectBtn.addEventListener('click', function () {
             if (window.redetectLocation) window.redetectLocation();
         });
+
+        var ipGeoEl     = document.getElementById('k-ipgeo');
+        var fixedRowEl  = document.getElementById('k-fixed-loc-row');
+        var changeLocEl = document.getElementById('k-change-loc');
+
+        ipGeoEl.addEventListener('change', function () {
+            var disabled = !ipGeoEl.checked;
+            fixedRowEl.style.display = disabled ? '-webkit-box' : 'none';
+            fixedRowEl.style.display = disabled ? 'flex'        : 'none';
+        });
+
+        changeLocEl.addEventListener('click', function () {
+            closeSettings();
+            if (window.openLocationModal) window.openLocationModal();
+        });
+        // end About section wiring
 
         backdrop.addEventListener('click', function (e) {
             if (!isInsideId(e.target, 'kiosk-modal')) closeSettings();
