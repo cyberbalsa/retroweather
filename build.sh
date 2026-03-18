@@ -20,8 +20,17 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 cd "$SCRIPT_DIR"
 
 # ── Ensure Java 21 (Gradle 8.12 does not support Java 22+) ───────────────────
-JAVA21=$(compgen -G "/usr/lib/jvm/java-21-openjdk*/bin/java" 2>/dev/null | head -1)
-if [[ -z "$JAVA21" ]]; then
+find_java21() {
+    # Fedora: /usr/lib/jvm/java-21-openjdk (symlink) or versioned dir
+    local j
+    for j in /usr/lib/jvm/java-21-openjdk /usr/lib/jvm/java-21; do
+        [[ -x "$j/bin/java" ]] && echo "$j" && return 0
+    done
+    j=$(find /usr/lib/jvm -maxdepth 1 -name "java-21*" -type d 2>/dev/null | sort -V | tail -1)
+    [[ -n "$j" && -x "$j/bin/java" ]] && echo "$j" && return 0
+    return 1
+}
+if ! JAVA21_HOME=$(find_java21); then
     info "Java 21 not found — installing..."
     if command -v dnf5 &>/dev/null; then
         sudo dnf5 install -y java-21-openjdk-devel
@@ -32,10 +41,10 @@ if [[ -z "$JAVA21" ]]; then
     else
         die "No supported package manager. Install java-21-openjdk-devel manually."
     fi
-    JAVA21=$(compgen -G "/usr/lib/jvm/java-21-openjdk*/bin/java" 2>/dev/null | head -1)
+    JAVA21_HOME=$(find_java21) || die "Java 21 not found after install."
 fi
-export JAVA_HOME="$(dirname "$(dirname "$JAVA21")")"
-info "Using Java: $JAVA_HOME"
+export JAVA_HOME="$JAVA21_HOME"
+info "Using Java 21: $JAVA_HOME"
 
 # ── Ensure gh CLI ─────────────────────────────────────────────────────────────
 command -v gh &>/dev/null || die "gh not installed. Run: ./sign-release.sh --setup"
