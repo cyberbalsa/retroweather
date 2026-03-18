@@ -140,6 +140,43 @@ class TestZipStructure:
 # Tests: export-pubkey format
 # ---------------------------------------------------------------------------
 
+class TestRsaKeyDerivation:
+    def test_hmac_to_rsa_key_returns_rsa_key(self):
+        from fido2_keysign import _hmac_to_rsa_key
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+        key = _hmac_to_rsa_key(os.urandom(32))
+        assert isinstance(key, RSAPrivateKey)
+
+    def test_hmac_to_rsa_key_is_2048_bits(self):
+        from fido2_keysign import _hmac_to_rsa_key
+        key = _hmac_to_rsa_key(os.urandom(32))
+        assert key.key_size == 2048
+
+    def test_hmac_to_rsa_key_is_deterministic(self):
+        from fido2_keysign import _hmac_to_rsa_key
+        hmac = os.urandom(32)
+        k1 = _hmac_to_rsa_key(hmac)
+        k2 = _hmac_to_rsa_key(hmac)
+        assert k1.private_numbers().d == k2.private_numbers().d
+
+    def test_different_hmac_gives_different_rsa_key(self):
+        from fido2_keysign import _hmac_to_rsa_key
+        k1 = _hmac_to_rsa_key(os.urandom(32))
+        k2 = _hmac_to_rsa_key(os.urandom(32))
+        assert k1.private_numbers().d != k2.private_numbers().d
+
+    def test_ec_and_rsa_keys_independent(self):
+        """Same HMAC must yield different key material for EC and RSA."""
+        from fido2_keysign import _hmac_to_ec_key, _hmac_to_rsa_key
+        hmac = os.urandom(32)
+        ec_key  = _hmac_to_ec_key(hmac)
+        rsa_key = _hmac_to_rsa_key(hmac)
+        # EC private key d value must not equal RSA private key d
+        ec_d  = ec_key.private_numbers().private_value
+        rsa_d = rsa_key.private_numbers().d
+        assert ec_d != rsa_d
+
+
 class TestExportPubkeyFormat:
     def test_public_key_pem_is_valid(self, ec_signing_key):
         pub_pem = ec_signing_key.public_key().public_bytes(

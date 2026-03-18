@@ -69,6 +69,106 @@ def _hmac_to_ec_key(hmac_bytes: bytes):
     return ec.derive_private_key(d, ec.SECP256R1())
 
 
+# ── RSA key derivation (for AAB upload-key signing) ───────────────────────────
+
+def _miller_rabin(n: int) -> bool:
+    """Deterministic Miller-Rabin using witnesses sufficient for 1024-bit primes."""
+    if n < 2: return False
+    for p in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n == p: return True
+        if n % p == 0: return False
+    r, d = 0, n - 1
+    while d % 2 == 0:
+        r += 1
+        d //= 2
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        x = pow(a, d, n)
+        if x in (1, n - 1): continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1: break
+        else:
+            return False
+    return True
+
+
+def _deterministic_prime(seed: bytes, bits: int, index: int) -> int:
+    """Generate a deterministic `bits`-bit prime from seed."""
+    byte_len = (bits + 7) // 8
+    counter  = 0
+    while True:
+        raw = b''
+        i   = 0
+        while len(raw) < byte_len:
+            raw += hashlib.sha512(
+                seed
+                + index.to_bytes(8, 'big')
+                + counter.to_bytes(8, 'big')
+                + i.to_bytes(4, 'big')
+            ).digest()
+            i += 1
+        raw       = raw[:byte_len]
+        candidate = bytearray(raw)
+        candidate[0] |= 0xC0   # top 2 bits set → correct bit-length
+        candidate[-1] |= 0x01  # LSB set → odd
+        n = int.from_bytes(candidate, 'big')
+        if _miller_rabin(n):
+            return n
+        counter += 1
+
+
+def _hmac_to_rsa_key(hmac_bytes: bytes):
+    """
+    Derive a deterministic RSA-2048 private key from 32 bytes of HMAC output.
+    Uses a different HKDF domain from the EC key so the two keys are independent.
+    Key lives only in memory — never written to disk by this function.
+    """
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes as _h
+    from cryptography.hazmat.primitives.asymmetric.rsa import (
+        RSAPrivateNumbers, RSAPublicNumbers,
+        rsa_crt_dmp1, rsa_crt_dmq1, rsa_crt_iqmp,
+    )
+    from cryptography.hazmat.backends import default_backend
+
+    seed = HKDF(
+        algorithm=_h.SHA256(),
+        length=64,
+        salt=b"weatherstarkiosk:rsa:v1",
+        info=b"android-upload-rsa-key",
+    ).derive(hmac_bytes)
+
+    e = 65537
+    while True:
+        p = _deterministic_prime(seed, 1024, 0)
+        q = _deterministic_prime(seed, 1024, 1)
+        if p == q:
+            seed = hashlib.sha512(seed).digest()
+            continue
+        if p < q:
+            p, q = q, p
+        phi = (p - 1) * (q - 1)
+        # Verify gcd(e, phi) == 1 (virtually certain for 65537, guard defensively)
+        g, tmp = phi, e
+        while tmp: g, tmp = tmp, g % tmp
+        if g != 1:
+            seed = hashlib.sha512(seed).digest()
+            continue
+        break
+
+    n   = p * q
+    d   = pow(e, -1, phi)
+    pub = RSAPublicNumbers(e=e, n=n)
+    priv = RSAPrivateNumbers(
+        p=p, q=q, d=d,
+        dmp1=rsa_crt_dmp1(d, p),
+        dmq1=rsa_crt_dmq1(d, q),
+        iqmp=rsa_crt_iqmp(p, q),
+        public_numbers=pub,
+    )
+    return priv.private_key(default_backend())
+
+
 def _make_cert(private_key):
     """Self-signed X.509 cert for private_key. Valid 10 years."""
     from cryptography import x509
@@ -250,8 +350,13 @@ def _derive_hmac_once() -> bytes:
 
 
 def _derive_signing_key():
-    """One touch → EC P-256 private key in memory only."""
+    """One touch → EC P-256 private key in memory only (used for APK signing)."""
     return _hmac_to_ec_key(_derive_hmac_once())
+
+
+def _derive_rsa_signing_key():
+    """One touch → RSA-2048 private key in memory only (used for AAB signing)."""
+    return _hmac_to_rsa_key(_derive_hmac_once())
 
 
 # ── Secure temp key file ──────────────────────────────────────────────────────
@@ -286,10 +391,12 @@ class _TempKey:
 
 class _TempKeystore:
     """
-    Build an in-memory PKCS12 keystore from a derived key + stored cert,
+    Build an in-memory PKCS12 keystore from a derived key + cert,
     write it to /dev/shm (0600), return path + password, shred on exit.
+    cert defaults to the stored EC cert; pass an explicit cert when the
+    key type differs (e.g. RSA for AAB signing).
     """
-    def __init__(self, private_key):
+    def __init__(self, private_key, cert=None):
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.serialization import pkcs12
 
@@ -298,10 +405,13 @@ class _TempKeystore:
         fd, self.path = tempfile.mkstemp(suffix='.p12', dir=tmpdir)
         os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
 
+        if cert is None:
+            cert = _load_cert()
+
         p12 = pkcs12.serialize_key_and_certificates(
             name=KEY_ALIAS.encode(),
             key=private_key,
-            cert=_load_cert(),
+            cert=cert,
             cas=None,
             encryption_algorithm=serialization.BestAvailableEncryption(
                 self.password.encode()
@@ -361,11 +471,14 @@ def _do_sign_apk(private_key, src: str, dst: str):
 
 
 def _do_sign_aab(private_key, src: str, dst: str):
+    # RSA key required: jarsigner produces META-INF/*.RSA which Google Play accepts.
+    # An EC key would produce *.EC which Google Play rejects as "invalid signature".
     shutil.copy2(src, dst)
-    with _TempKeystore(private_key) as (ks_path, ks_pass):
+    cert = _make_cert(private_key)   # in-memory cert matching the key type
+    with _TempKeystore(private_key, cert=cert) as (ks_path, ks_pass):
         subprocess.run([
             'jarsigner',
-            '-keystore', ks_path,
+            '-keystore',  ks_path,
             '-storetype', 'pkcs12',
             '-storepass', ks_pass,
             '-keypass',   ks_pass,
@@ -378,9 +491,50 @@ def _do_sign_aab(private_key, src: str, dst: str):
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+def _ensure_apksigner():
+    """Install apksigner if not already present. Tries apt-get, then Maven JAR."""
+    if _find_apksigner():
+        return   # already installed
+
+    print("apksigner not found — attempting to install...", file=sys.stderr)
+
+    # Try system package manager (Debian / Ubuntu)
+    if shutil.which('apt-get'):
+        r = subprocess.run(
+            ['sudo', 'apt-get', 'install', '-y', 'apksigner'],
+            capture_output=True,
+        )
+        if r.returncode == 0 and _find_apksigner():
+            print("  apksigner installed via apt-get.", file=sys.stderr)
+            return
+
+    # Fall back: download standalone JAR from Maven and create a wrapper
+    import urllib.request
+    jar_dir  = Path.home() / '.local' / 'lib'
+    jar_dir.mkdir(parents=True, exist_ok=True)
+    jar_path = jar_dir / 'apksigner.jar'
+    bin_path = Path.home() / '.local' / 'bin' / 'apksigner'
+    bin_path.parent.mkdir(parents=True, exist_ok=True)
+
+    maven   = "https://dl.google.com/android/maven2/com/android/tools/build/apksigner"
+    version = "35.0.0"
+    url     = f"{maven}/{version}/apksigner-{version}.jar"
+    print(f"  Downloading {url} ...", file=sys.stderr)
+    urllib.request.urlretrieve(url, jar_path)
+
+    bin_path.write_text(
+        f"#!/bin/sh\nexec java -jar {jar_path} \"$@\"\n"
+    )
+    bin_path.chmod(0o755)
+    print(f"  apksigner wrapper written to {bin_path}", file=sys.stderr)
+    print(f"  Ensure {bin_path.parent} is on your PATH.", file=sys.stderr)
+
+
 def cmd_setup():
     from fido2.ctap2 import Ctap2
     from cryptography.hazmat.primitives import serialization
+
+    _ensure_apksigner()
 
     ctap = Ctap2(_find_device())
     info = ctap.get_info()
@@ -433,19 +587,21 @@ def cmd_sign_apk(src: str, dst: str):
 
 
 def cmd_sign_aab(src: str, dst: str):
-    _do_sign_aab(_derive_signing_key(), src, dst)
+    _do_sign_aab(_derive_rsa_signing_key(), src, dst)
 
 
 def cmd_sign_both(apk_src: str, aab_src: str):
-    """Single YubiKey touch → derive key once → sign APK and AAB."""
-    base  = Path(apk_src).stem.replace('-unsigned', '')
-    d     = Path(apk_src).parent
+    """Single YubiKey touch → derive EC + RSA keys → sign APK and AAB."""
+    base    = Path(apk_src).stem.replace('-unsigned', '')
+    d       = Path(apk_src).parent
     apk_dst = str(d / f"{base}-signed.apk")
     aab_dst = str(Path(aab_src).parent / f"{Path(aab_src).stem}-signed.aab")
 
-    key = _derive_signing_key()   # ONE touch
-    _do_sign_apk(key, apk_src, apk_dst)
-    _do_sign_aab(key, aab_src, aab_dst)
+    hmac    = _derive_hmac_once()          # ONE touch
+    ec_key  = _hmac_to_ec_key(hmac)       # → APK  (apksigner v2/v3, ECDSA fine)
+    rsa_key = _hmac_to_rsa_key(hmac)      # → AAB  (jarsigner *.RSA, required by Play)
+    _do_sign_apk(ec_key,  apk_src, apk_dst)
+    _do_sign_aab(rsa_key, aab_src, aab_dst)
     return apk_dst, aab_dst
 
 
