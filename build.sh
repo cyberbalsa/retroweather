@@ -19,19 +19,23 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
 cd "$SCRIPT_DIR"
 
-# ── Ensure Java ───────────────────────────────────────────────────────────────
-if ! command -v java &>/dev/null; then
-    info "Java not found — installing..."
+# ── Ensure Java 21 (Gradle 8.12 does not support Java 22+) ───────────────────
+JAVA21=$(compgen -G "/usr/lib/jvm/java-21-openjdk*/bin/java" 2>/dev/null | head -1)
+if [[ -z "$JAVA21" ]]; then
+    info "Java 21 not found — installing..."
     if command -v dnf5 &>/dev/null; then
-        sudo dnf5 install -y java-latest-openjdk-devel
+        sudo dnf5 install -y java-21-openjdk-devel
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y java-latest-openjdk-devel
+        sudo dnf install -y java-21-openjdk-devel
     elif command -v apt-get &>/dev/null; then
-        sudo apt-get install -y default-jdk-headless
+        sudo apt-get install -y openjdk-21-jdk-headless
     else
-        die "Java not found and no supported package manager. Install a JDK manually."
+        die "No supported package manager. Install java-21-openjdk-devel manually."
     fi
+    JAVA21=$(compgen -G "/usr/lib/jvm/java-21-openjdk*/bin/java" 2>/dev/null | head -1)
 fi
+export JAVA_HOME="$(dirname "$(dirname "$JAVA21")")"
+info "Using Java: $JAVA_HOME"
 
 # ── Ensure gh CLI ─────────────────────────────────────────────────────────────
 command -v gh &>/dev/null || die "gh not installed. Run: ./sign-release.sh --setup"
