@@ -19,8 +19,29 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
 cd "$SCRIPT_DIR"
 
+# ── Ensure Java (required for Gradle wrapper bootstrap) ──────────────────────
+if ! command -v java &>/dev/null; then
+    info "Java not found — installing..."
+    if command -v dnf5 &>/dev/null; then
+        sudo dnf5 install -y java-latest-openjdk-devel
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y java-latest-openjdk-devel
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get install -y default-jdk-headless
+    else
+        die "Java not found and no supported package manager available. Install a JDK manually."
+    fi
+fi
+
+# ── Ensure gh CLI ─────────────────────────────────────────────────────────────
 command -v gh &>/dev/null || die "gh not installed. Run: ./sign-release.sh --setup"
 gh auth status &>/dev/null || die "Not logged in to GitHub. Run: gh auth login"
+
+# ── Download Gradle distribution if not already cached ───────────────────────
+if ! ./gradlew --version &>/dev/null; then
+    info "Downloading Gradle distribution..."
+    ./gradlew --version
+fi
 
 info "Building release APK + AAB (targetSdk 35)..."
 ./gradlew assembleRelease bundleRelease
