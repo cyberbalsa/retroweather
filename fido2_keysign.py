@@ -23,7 +23,7 @@ Commands:
   sign-both  APK AAB    Touch YubiKey ONCE → sign both artifacts
 """
 
-import sys, json, base64, hashlib, os, stat, subprocess, shutil, tempfile
+import sys, json, base64, hashlib, os, stat, subprocess, shutil, tempfile, zipfile
 from pathlib import Path
 
 # ── Paths & constants ─────────────────────────────────────────────────────────
@@ -31,7 +31,9 @@ from pathlib import Path
 CRED_FILE   = Path.home() / ".android" / "weatherstar-fido2.json"
 CERT_FILE   = Path.home() / ".android" / "weatherstar-signing-cert.pem"
 KEY_ALIAS   = "weatherstarkiosk"
-RP_ID       = "weatherstarkiosk.signing"
+RP_ID              = "weatherstarkiosk.signing"
+GOOGLE_PUBKEY_FILE = Path.home() / "google-pubkey.pem"
+UPLOAD_ZIP         = Path.home() / "weatherstar-upload-key.zip"
 
 # Fixed so derived key is deterministic (security is in the YubiKey device secret)
 CLIENT_HASH = hashlib.sha256(b"weatherstarkiosk:android:client-data:v1").digest()
