@@ -2,6 +2,7 @@ package com.weatherstartv
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -14,15 +15,6 @@ class LocationBridge(
     private val webView: WebView
 ) {
     private val fusedClient = LocationServices.getFusedLocationProviderClient(activity)
-
-    companion object {
-        const val PERMISSION_REQUEST_CODE = 1001
-
-        fun buildSuccessJs(lat: Double, lon: Double): String =
-            "onLocationResult(%f, %f)".format(lat, lon)
-
-        fun buildErrorJs(): String = "onLocationError()"
-    }
 
     @JavascriptInterface
     fun requestLocation() {
@@ -54,22 +46,59 @@ class LocationBridge(
             callbackError(); return
         }
 
-        // getLastLocation() works on all API levels (API 19+).
-        // getCurrentLocation() is API 26+ only — do not use for min SDK 19.
-        fusedClient.lastLocation
-            .addOnSuccessListener { location ->
-                if (location != null) callbackSuccess(location.latitude, location.longitude)
-                else callbackError() // No cached location — location.js falls back to IP geo
-            }
-            .addOnFailureListener { callbackError() }
+        // Play Services task callbacks require a Looper thread.
+        // @JavascriptInterface methods run on a non-Looper background thread, so we must
+        // dispatch to the main thread before calling any FusedLocationProviderClient method.
+        activity.runOnUiThread {
+            fusedClient.lastLocation
+                .addOnSuccessListener { location ->
+                    if (location != null) callbackSuccess(location.latitude, location.longitude)
+                    else callbackError() // No cached fix — location.js falls back to IP geo
+                }
+                .addOnFailureListener { callbackError() }
+        }
     }
 
     private fun callbackSuccess(lat: Double, lon: Double) {
+        android.util.Log.d("LocationBridge", "Location fix: lat=$lat lon=$lon")
         val js = buildSuccessJs(lat, lon)
         webView.post { webView.evaluateJavascript(js, null) }
     }
 
     private fun callbackError() {
+        android.util.Log.d("LocationBridge", "Location unavailable, falling back to IP geo")
         webView.post { webView.evaluateJavascript(buildErrorJs(), null) }
+    }
+
+    /** Called from JS when a location is successfully resolved (GPS, Wi-Fi, or IP geo). */
+    @JavascriptInterface
+    fun saveLocation(lat: Double, lon: Double) {
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_LAT, lat.toFloat())
+            .putFloat(KEY_LON, lon.toFloat())
+            .apply()
+    }
+
+    /** Called from JS when the user triggers Re-detect. */
+    @JavascriptInterface
+    fun clearSavedLocation() {
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_LAT)
+            .remove(KEY_LON)
+            .apply()
+    }
+
+    companion object {
+        const val PERMISSION_REQUEST_CODE = 1001
+        const val PREFS = "kiosk"
+        const val KEY_LAT = "lat"
+        const val KEY_LON = "lon"
+
+        fun buildSuccessJs(lat: Double, lon: Double): String =
+            "onLocationResult(%f, %f)".format(lat, lon)
+
+        fun buildErrorJs(): String = "onLocationError()"
     }
 }

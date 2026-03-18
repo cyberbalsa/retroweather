@@ -1,20 +1,115 @@
 package com.weatherstartv
 
 import android.content.Context
+import android.net.Uri
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.WebViewAssetLoader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLConnection
 
 class KioskWebViewClient(private val context: Context) : WebViewClient() {
 
     // Injected in dependency order: location and music before overlay bootstrap
     private val assetFiles = listOf("location.js", "music.js", "settings.js", "overlay.js")
 
+    // ws4kp uses absolute paths like /data/travelcities.json and /scripts/custom.js
+    // These get served from our ws4kp/ assets subfolder via custom path handlers
+    private val ws4kpDataHandler = WebViewAssetLoader.PathHandler { path ->
+        serveAsset("ws4kp/data/$path")
+    }
+
+    private val ws4kpScriptsHandler = WebViewAssetLoader.PathHandler { path ->
+        serveAsset("ws4kp/scripts/$path")
+    }
+
+    // Serves file:///android_asset/ content via https://appassets.androidplatform.net/assets/
+    // so ws4kp's fetch() calls work (modern WebView blocks fetch on file:// origins)
+    private val assetLoader = WebViewAssetLoader.Builder()
+        .setDomain("appassets.androidplatform.net")
+        .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+        .addPathHandler("/data/", ws4kpDataHandler)
+        .addPathHandler("/scripts/", ws4kpScriptsHandler)
+        .build()
+
+    private fun serveAsset(assetPath: String): WebResourceResponse? {
+        return try {
+            val stream = context.assets.open(assetPath)
+            val mime = URLConnection.guessContentTypeFromName(assetPath) ?: "application/octet-stream"
+            WebResourceResponse(mime, "utf-8", stream)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Proxy requests to external URLs that would be blocked by CORS from our
+     * https://appassets.androidplatform.net origin (archive.org, ipapi.co).
+     * We make the request natively and return the response with CORS headers added.
+     */
+    private fun proxyExternalRequest(urlStr: String): WebResourceResponse? {
+        return try {
+            android.util.Log.d("KioskProxy", "Proxying: $urlStr")
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 30_000
+            conn.setRequestProperty("User-Agent", "WeatherStarKiosk/1.0")
+            val code = conn.responseCode
+            android.util.Log.d("KioskProxy", "Proxy response $code for $urlStr")
+            val mime = conn.contentType?.substringBefore(';') ?: "application/octet-stream"
+            val headers = mapOf(
+                "Access-Control-Allow-Origin" to "*",
+                "Access-Control-Allow-Methods" to "GET"
+            )
+            // inputStream throws FileNotFoundException for 4xx/5xx; use errorStream instead
+            val stream = if (code >= 400) conn.errorStream ?: conn.inputStream else conn.inputStream
+            WebResourceResponse(mime, "utf-8", code, "OK", headers, stream)
+        } catch (e: Exception) {
+            android.util.Log.e("KioskProxy", "Proxy failed for $urlStr: ${e.message}")
+            null
+        }
+    }
+
+    override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest
+    ): WebResourceResponse? {
+        val url = request.url
+        val urlStr = url.toString()
+
+        // Serve our bundled assets via WebViewAssetLoader
+        val assetResponse = assetLoader.shouldInterceptRequest(url)
+        if (assetResponse != null) return assetResponse
+
+        // Proxy external CORS-restricted requests through native code.
+        // NOTE: archive.org MP3/audio files are NOT proxied — <audio src> doesn't enforce
+        // CORS so WebView's native media player handles them directly with proper range request
+        // support. Only the XHR playlist XML fetch needs CORS headers.
+        val isArchiveXml = urlStr.startsWith("https://archive.org/") && urlStr.contains(".xml")
+        if (isArchiveXml ||
+            urlStr.startsWith("https://ipinfo.io/") ||
+            urlStr.startsWith("https://ipapi.co/")) {
+            return proxyExternalRequest(urlStr)
+        }
+
+        return null
+    }
+
     override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
         val combined = assetFiles.joinToString("\n;\n") { filename ->
             context.assets.open(filename).bufferedReader().readText()
         }
-        view.evaluateJavascript(combined, null)
+        // Guard prevents double-injection if onPageFinished fires multiple times
+        // for the same JS context (e.g. hash changes, sub-resource callbacks).
+        // A real page reload creates a fresh JS context so __kioskOK will be unset.
+        view.evaluateJavascript(
+            "(function(){if(window.__kioskOK)return;window.__kioskOK=true;\n$combined\n})()",
+            null
+        )
     }
 
     @Deprecated("Deprecated in API 23")
