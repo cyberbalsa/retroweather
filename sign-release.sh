@@ -114,6 +114,8 @@ echo ""
 info "Updating GitHub release $RELEASE_TAG..."
 drop_asset "$RELEASE_TAG" "app-release-unsigned.apk"
 drop_asset "$RELEASE_TAG" "app-release.aab"
+[[ -f "$signed_apk" ]] && drop_asset "$RELEASE_TAG" "$(basename "$signed_apk")"
+[[ -f "$signed_aab" ]] && drop_asset "$RELEASE_TAG" "$(basename "$signed_aab")"
 
 [[ -f "$signed_apk" ]] && gh release upload "$RELEASE_TAG" "$signed_apk" --repo "$REPO"
 [[ -f "$signed_aab" ]] && gh release upload "$RELEASE_TAG" "$signed_aab" --repo "$REPO"
