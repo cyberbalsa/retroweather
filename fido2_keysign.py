@@ -436,12 +436,20 @@ class _TempKeystore:
 def _find_apksigner():
     path = shutil.which('apksigner')
     if path: return path
-    sdk = os.environ.get('ANDROID_HOME', os.path.expanduser('~/Android/Sdk'))
-    bt  = os.path.join(sdk, 'build-tools')
-    if os.path.isdir(bt):
-        ver = sorted(os.listdir(bt))[-1]
-        p   = os.path.join(bt, ver, 'apksigner')
-        if os.access(p, os.X_OK): return p
+    sdk_candidates = [
+        os.environ.get('ANDROID_HOME', ''),
+        os.path.expanduser('~/android-sdk'),
+        os.path.expanduser('~/Android/Sdk'),
+        os.path.expanduser('~/Android/sdk'),
+    ]
+    for sdk in sdk_candidates:
+        if not sdk: continue
+        bt = os.path.join(sdk, 'build-tools')
+        if os.path.isdir(bt):
+            versions = sorted(os.listdir(bt))
+            if versions:
+                p = os.path.join(bt, versions[-1], 'apksigner')
+                if os.access(p, os.X_OK): return p
     return None
 
 
@@ -492,26 +500,33 @@ def _do_sign_aab(private_key, src: str, dst: str):
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 def _ensure_apksigner():
-    """Install apksigner if not already present via apt-get."""
+    """Install apksigner if not already present."""
     if _find_apksigner():
         return   # already installed
 
-    print("apksigner not found — attempting to install via apt-get...", file=sys.stderr)
+    print("apksigner not found — attempting to install...", file=sys.stderr)
 
-    if not shutil.which('apt-get'):
-        sys.exit("ERROR: apt-get not available; install apksigner manually.")
+    # Try whichever package manager is available
+    if shutil.which('apt-get'):
+        pkg_cmd = ['sudo', 'apt-get', 'install', '-y', 'apksigner']
+    elif shutil.which('dnf5'):
+        pkg_cmd = ['sudo', 'dnf5', 'install', '-y', 'apksigner']
+    elif shutil.which('dnf'):
+        pkg_cmd = ['sudo', 'dnf', 'install', '-y', 'apksigner']
+    else:
+        sys.exit(
+            "ERROR: apksigner not found and no supported package manager available.\n"
+            "Install it manually (e.g. via Android SDK build-tools) and ensure it is on PATH."
+        )
 
-    r = subprocess.run(
-        ['sudo', 'apt-get', 'install', '-y', 'apksigner'],
-        capture_output=True,
-    )
+    r = subprocess.run(pkg_cmd, capture_output=True)
     if r.returncode != 0:
         sys.exit(
-            f"ERROR: apt-get install apksigner failed:\n"
+            "ERROR: package manager install failed:\n"
             + r.stderr.decode(errors='replace')
         )
     if not _find_apksigner():
-        sys.exit("ERROR: apksigner still not found after apt-get install.")
+        sys.exit("ERROR: apksigner still not found after install.")
     print("  apksigner installed.", file=sys.stderr)
 
 
