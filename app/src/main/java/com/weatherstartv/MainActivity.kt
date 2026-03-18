@@ -2,6 +2,7 @@ package com.weatherstartv
 
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -95,9 +96,8 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             useWideViewPort = true
             loadWithOverviewMode = true
-            // Allow file:// pages to access other file:// resources
-            allowFileAccessFromFileURLs = true
-            allowUniversalAccessFromFileURLs = true
+            // Allow file:// access (needed for WebViewAssetLoader path handlers)
+            allowFileAccess = true
         }
         // Suppress native long-press context menu — handled in JS
         webView.setOnLongClickListener { true }
@@ -109,8 +109,10 @@ class MainActivity : AppCompatActivity() {
      * Location is NOT set here — location.js handles it after page load.
      */
     private fun buildInitialUrl(): String {
-        val base = "file:///android_asset/ws4kp/index.html"
-        val params = listOf(
+        // Use WebViewAssetLoader's HTTPS origin so ws4kp's fetch() calls work
+        // (modern Android WebView blocks fetch() on file:// origins)
+        val base = "https://appassets.androidplatform.net/assets/ws4kp/index.html"
+        val params = mutableListOf(
             "settings-kiosk-checkbox=true",
             "settings-wide-checkbox=true",
             "settings-mediaPlaying-boolean=false", // we supply our own music
@@ -121,6 +123,14 @@ class MainActivity : AppCompatActivity() {
             "kiosk_shuffle=1",
             "kiosk_loc_mode=auto"
         )
+        // Pre-populate saved location so ws4kp loads immediately without IP geo lookup
+        val prefs = getSharedPreferences(LocationBridge.PREFS, MODE_PRIVATE)
+        val savedLat = prefs.getFloat(LocationBridge.KEY_LAT, Float.NaN)
+        val savedLon = prefs.getFloat(LocationBridge.KEY_LON, Float.NaN)
+        if (!savedLat.isNaN() && !savedLon.isNaN()) {
+            val latLonJson = "{\"lat\":$savedLat,\"lon\":$savedLon}"
+            params.add("latLon=${Uri.encode(latLonJson)}")
+        }
         return "$base?${params.joinToString("&")}"
     }
 }

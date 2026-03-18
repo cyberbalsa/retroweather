@@ -41,7 +41,8 @@
     // ── Core functions ───────────────────────────────────────────────────────
 
     function buildLatLonParam(lat, lon) {
-        return encodeURIComponent(JSON.stringify({ lat: lat, lon: lon }));
+        // Return raw JSON — setParam() will call encodeURIComponent on it
+        return JSON.stringify({ lat: lat, lon: lon });
     }
 
     function parseManualLatLon(input) {
@@ -56,38 +57,80 @@
 
     function applyLocationAndReload(lat, lon) {
         setParam('latLon', buildLatLonParam(lat, lon));
+        // Persist so next app start skips IP geo lookup
+        if (window.Android && window.Android.saveLocation) {
+            window.Android.saveLocation(lat, lon);
+        }
         window.location.reload();
     }
 
-    function tryIpGeo() {
+    function tryIpGeoUrl(url, extractFn, onFail) {
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', 'https://ipapi.co/json/', true);
+        xhr.open('GET', url, true);
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) return;
             if (xhr.status === 200) {
                 try {
                     var data = JSON.parse(xhr.responseText);
-                    if (data.latitude && data.longitude) {
-                        applyLocationAndReload(data.latitude, data.longitude);
+                    var coords = extractFn(data);
+                    if (coords) {
+                        applyLocationAndReload(coords.lat, coords.lon);
                         return;
                     }
                 } catch (e) { /* silent */ }
             }
-            console.log('[location] All methods failed, ws4kp will show city picker');
+            onFail();
         };
-        xhr.onerror = function () {
-            console.log('[location] IP geo request failed');
-        };
+        xhr.onerror = onFail;
         xhr.send();
+    }
+
+    function tryIpGeo() {
+        // ipinfo.io: 50k req/month free, accurate, own proprietary database
+        tryIpGeoUrl(
+            'https://ipinfo.io/json',
+            function (d) {
+                // loc field is "lat,lon" string
+                if (d.loc) {
+                    var parts = d.loc.split(',');
+                    if (parts.length === 2) {
+                        var lat = parseFloat(parts[0]);
+                        var lon = parseFloat(parts[1]);
+                        if (!isNaN(lat) && !isNaN(lon)) return { lat: lat, lon: lon };
+                    }
+                }
+                return null;
+            },
+            function () {
+                // ipinfo.io failed — try ipapi.co (MaxMind database, accurate for residential IPs)
+                tryIpGeoUrl(
+                    'https://ipapi.co/json/',
+                    function (d) {
+                        return (d.latitude && d.longitude) ? { lat: d.latitude, lon: d.longitude } : null;
+                    },
+                    function () {
+                        console.log('[location] IP geo unavailable, ws4kp will show city picker');
+                    }
+                );
+            }
+        );
+    }
+
+    var locationCallbackTimer = null;
+
+    function cancelLocationTimer() {
+        if (locationCallbackTimer) { clearTimeout(locationCallbackTimer); locationCallbackTimer = null; }
     }
 
     // Called by LocationBridge on GPS success
     window.onLocationResult = function (lat, lon) {
+        cancelLocationTimer();
         applyLocationAndReload(lat, lon);
     };
 
     // Called by LocationBridge on GPS failure/denied
     window.onLocationError = function () {
+        cancelLocationTimer();
         tryIpGeo();
     };
 
@@ -97,6 +140,9 @@
         if (!parsed) { console.warn('[location] Invalid input:', latLonStr); return false; }
         setParam('latLon', buildLatLonParam(parsed.lat, parsed.lon));
         setParam('kiosk_loc_mode', 'manual');
+        if (window.Android && window.Android.saveLocation) {
+            window.Android.saveLocation(parsed.lat, parsed.lon);
+        }
         window.location.reload();
         return true;
     };
@@ -105,6 +151,9 @@
     window.redetectLocation = function () {
         removeParam('latLon');
         setParam('kiosk_loc_mode', 'auto');
+        if (window.Android && window.Android.clearSavedLocation) {
+            window.Android.clearSavedLocation();
+        }
         window.location.reload();
     };
 
@@ -112,12 +161,28 @@
         var locMode = getParam('kiosk_loc_mode');
         var hasLatLon = getParam('latLon') !== null;
 
-        if (locMode === 'manual' && hasLatLon) {
-            console.log('[location] Manual mode with coords, skipping auto-detect');
+        // Skip detection whenever coords are already present (auto, ws4kp city picker, or manual).
+        // Re-detection is triggered explicitly via redetectLocation() in settings.
+        if (hasLatLon) {
+            // Persist to Android SharedPreferences so next app restart loads immediately.
+            // This captures locations set by ws4kp's own city picker too.
+            try {
+                var coords = JSON.parse(getParam('latLon'));
+                if (coords && coords.lat && coords.lon && window.Android && window.Android.saveLocation) {
+                    window.Android.saveLocation(coords.lat, coords.lon);
+                }
+            } catch (e) { /* silent */ }
+            console.log('[location] Coords already set, skipping detection');
             return;
         }
 
         if (window.Android) {
+            // Safety net: if LocationBridge never calls back (e.g. dead Play Services),
+            // fall through to IP geo after 8 s rather than hanging forever.
+            locationCallbackTimer = setTimeout(function () {
+                console.log('[location] Location callback timeout, falling back to IP geo');
+                tryIpGeo();
+            }, 8000);
             window.Android.requestLocation();
         } else {
             window.onLocationError();

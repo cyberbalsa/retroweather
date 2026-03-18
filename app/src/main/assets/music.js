@@ -77,6 +77,18 @@
         playTrack((currentIndex + 1) % playlist.length);
     }
 
+    // Re-enable ws4kp's built-in audio when archive.org is unavailable
+    function enableWs4kpAudio() {
+        try {
+            // ws4kp reads settings-mediaPlaying-boolean from the URL on init;
+            // flipping the URL param and reloading lets ws4kp handle its own audio
+            var search = window.location.search;
+            search = search.replace('settings-mediaPlaying-boolean=false', 'settings-mediaPlaying-boolean=true');
+            history.replaceState(null, '', window.location.pathname + search);
+            console.log('[music] ws4kp audio enabled as fallback');
+        } catch (e) { /* ignore */ }
+    }
+
     function initMusic() {
         if (initialized) return;
         initialized = true;
@@ -94,13 +106,15 @@
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) return;
             if (xhr.status !== 200) {
-                console.warn('[music] XML fetch failed, status:', xhr.status);
+                console.warn('[music] XML fetch failed (status ' + xhr.status + '), falling back to ws4kp audio');
+                enableWs4kpAudio();
                 audio = null;
                 return;
             }
             var tracks = parsePlaylistFromXml(xhr.responseText);
             if (tracks.length === 0) {
-                console.warn('[music] No tracks found in XML');
+                console.warn('[music] No tracks found in XML, falling back to ws4kp audio');
+                enableWs4kpAudio();
                 audio = null;
                 return;
             }
@@ -109,7 +123,8 @@
             playTrack(0);
         };
         xhr.onerror = function () {
-            console.warn('[music] XML request failed, music disabled');
+            console.warn('[music] XML request failed, falling back to ws4kp audio');
+            enableWs4kpAudio();
             audio = null;
         };
         xhr.send();
