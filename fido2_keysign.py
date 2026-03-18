@@ -478,7 +478,7 @@ def _do_sign_apk(private_key, src: str, dst: str):
             apksigner, 'sign',
             '--ks', ks_path,
             '--ks-pass', f'pass:{ks_pass}',
-            '--ks-key-alias', 'key0',
+            '--ks-key-alias', KEY_ALIAS,
             '--out', dst,
             src,
         ], check=True)
