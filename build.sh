@@ -65,6 +65,41 @@ if [[ ! -x "$GRADLE" ]]; then
     success "Gradle 8.12 installed at $GRADLE_HOME"
 fi
 
+# ── Fetch and build ws4kp assets ─────────────────────────────────────────────
+WS4KP_VERSION="6.5.3"
+WS4KP_ASSETS="$SCRIPT_DIR/app/src/main/assets/ws4kp"
+WS4KP_MARKER="$WS4KP_ASSETS/.version"
+
+if [[ "$(cat "$WS4KP_MARKER" 2>/dev/null)" != "$WS4KP_VERSION" ]]; then
+    info "Building ws4kp $WS4KP_VERSION assets..."
+
+    if ! command -v node &>/dev/null; then
+        if command -v dnf5 &>/dev/null; then
+            sudo dnf5 install -y nodejs
+        elif command -v dnf &>/dev/null; then
+            sudo dnf install -y nodejs
+        elif command -v apt-get &>/dev/null; then
+            sudo apt-get install -y nodejs npm
+        else
+            die "node not found and no supported package manager. Install Node.js manually."
+        fi
+    fi
+
+    ws4kp_tmp=$(mktemp -d)
+    trap 'rm -rf "$ws4kp_tmp"' EXIT
+    curl -fL "https://github.com/netbymatt/ws4kp/archive/refs/tags/v${WS4KP_VERSION}.tar.gz" \
+        | tar -xz -C "$ws4kp_tmp" --strip-components=1
+    (cd "$ws4kp_tmp" && npm ci --silent && npx gulp buildDist)
+
+    # Copy dist output into assets, preserving readme placeholder
+    command -v rsync &>/dev/null || { sudo dnf5 install -y rsync 2>/dev/null || sudo dnf install -y rsync 2>/dev/null || sudo apt-get install -y rsync; }
+    rsync -a --delete --exclude=readme.txt "$ws4kp_tmp/dist/" "$WS4KP_ASSETS/"
+    echo "$WS4KP_VERSION" > "$WS4KP_MARKER"
+    success "ws4kp $WS4KP_VERSION assets ready."
+else
+    info "ws4kp $WS4KP_VERSION assets already present."
+fi
+
 # ── Android SDK ───────────────────────────────────────────────────────────────
 if [[ -z "${ANDROID_HOME:-}" ]]; then
     for candidate in "$HOME/android-sdk" "$HOME/Android/Sdk" "$HOME/Android/sdk" /opt/android-sdk; do
