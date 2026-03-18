@@ -103,7 +103,7 @@ def _find_device():
 
 def _best_pin_protocol(ctap):
     from fido2.ctap2.pin import PinProtocolV1, PinProtocolV2
-    versions = ctap.get_info().pin_uv_auth_protocols or [1]
+    versions = ctap.get_info().pin_uv_protocols or [1]
     return PinProtocolV2() if 2 in versions else PinProtocolV1()
 
 
