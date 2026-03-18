@@ -1,0 +1,11 @@
+{
+  "name": "weatherstar-kiosk-tools",
+  "private": true,
+  "scripts": {
+    "lint": "eslint app/src/main/assets/*.js",
+    "test": "node tests/location.test.js && node tests/music.test.js && node tests/settings.test.js"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}
