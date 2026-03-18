@@ -15,7 +15,7 @@
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
-        android:label="WeatherStar"
+        android:label="Retro Weather"
         android:theme="@style/Theme.WeatherKiosk"
         android:hardwareAccelerated="true">
 
