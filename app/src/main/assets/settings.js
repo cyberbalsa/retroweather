@@ -11,7 +11,7 @@
         + '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
         + '-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;'
         + '}'
-        + '#kiosk-backdrop.open{display:-webkit-box;display:-webkit-flex;display:flex;}'
+        + '#kiosk-backdrop.open{display:-webkit-box!important;display:-webkit-flex!important;display:flex!important;}'
         + '#kiosk-modal{'
         + 'background:#0d1b2a;border:1px solid #1e3a5f;border-radius:12px;'
         + 'padding:24px;width:90vw;max-width:480px;max-height:80vh;'
