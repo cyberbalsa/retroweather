@@ -86,6 +86,10 @@
     }
 
     function tryIpGeo() {
+        // Defensive: coords already set — nothing to do (normally caught by initLocation early-return)
+        if (getParam('latLon') !== null) return;
+        // User disabled IP geo services — go straight to manual entry modal
+        if (getParam('kiosk_ipgeo') === '0') { openLocationModal(); return; }
         // ipinfo.io: 50k req/month free, accurate, own proprietary database
         tryIpGeoUrl(
             'https://ipinfo.io/json',
@@ -109,12 +113,101 @@
                         return (d.latitude && d.longitude) ? { lat: d.latitude, lon: d.longitude } : null;
                     },
                     function () {
-                        console.log('[location] IP geo unavailable, ws4kp will show city picker');
+                        openLocationModal();
                     }
                 );
             }
         );
     }
+
+    // ── Location Modal ───────────────────────────────────────────────────────
+    // Blocking modal shown when all automatic detection fails or IP geo is disabled.
+    // Cannot be dismissed without supplying valid coordinates.
+
+    var _locKeyHandler = null;
+
+    function openLocationModal() {
+        if (!document.getElementById('kiosk-loc-backdrop')) {
+            var style = document.createElement('style');
+            style.type = 'text/css';
+            style.appendChild(document.createTextNode(
+                '#kiosk-loc-backdrop{'
+                + 'display:-webkit-box;display:-webkit-flex;display:flex;'
+                + 'position:fixed;top:0;left:0;right:0;bottom:0;'
+                + 'background:rgba(0,0,0,0.85);z-index:100000;'
+                + '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
+                + '-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;'
+                + '}'
+                + '#kiosk-loc-modal{'
+                + 'background:#0d1b2a;border:1px solid #1e3a5f;border-radius:12px;'
+                + 'padding:24px;width:80vw;max-width:360px;color:#e0e8f0;'
+                + 'font-family:sans-serif;'
+                + '-webkit-box-sizing:border-box;box-sizing:border-box;'
+                + '}'
+                + '#kiosk-loc-modal h2{margin:0 0 8px;font-size:1.1em;color:#7cb9e8;}'
+                + '#kiosk-loc-modal p{font-size:0.8em;color:#9ab;margin:0 0 12px;}'
+                + '#kiosk-loc-input{'
+                + 'background:#1e3a5f;border:1px solid #3a6a9f;border-radius:4px;'
+                + 'color:#e0e8f0;padding:4px 8px;font-size:0.9em;width:100%;'
+                + '-webkit-box-sizing:border-box;box-sizing:border-box;margin-bottom:6px;'
+                + '}'
+                + '#kiosk-loc-error{color:#f08080;font-size:0.8em;min-height:1.2em;margin-bottom:10px;}'
+                + '#kiosk-loc-submit{'
+                + 'background:#1e5a9f;color:white;border:none;border-radius:6px;'
+                + 'padding:10px 24px;font-size:0.95em;cursor:pointer;width:100%;'
+                + '}'
+            ));
+            document.head.appendChild(style);
+
+            document.body.insertAdjacentHTML('beforeend',
+                '<div id="kiosk-loc-backdrop">'
+                + '<div id="kiosk-loc-modal">'
+                + '<h2>Enter your location</h2>'
+                + '<p>Location could not be detected automatically.</p>'
+                + '<input type="text" id="kiosk-loc-input" placeholder="40.7128,-74.0060" tabindex="0">'
+                + '<div id="kiosk-loc-error"></div>'
+                + '<button id="kiosk-loc-submit" tabindex="0">Set Location</button>'
+                + '</div></div>'
+            );
+
+            document.getElementById('kiosk-loc-submit').addEventListener('click', function () {
+                var val = document.getElementById('kiosk-loc-input').value;
+                var coords = parseManualLatLon(val);
+                if (!coords) {
+                    document.getElementById('kiosk-loc-error').textContent =
+                        'Invalid. Use lat,lon — e.g. 40.7128,-74.0060';
+                    return;
+                }
+                document.getElementById('kiosk-loc-error').textContent = '';
+                applyLocationAndReload(coords.lat, coords.lon);
+            });
+        }
+
+        // Block Escape / GoBack so user cannot dismiss without supplying coordinates.
+        // Capture phase (true) fires before the settings modal keydown handler.
+        if (!_locKeyHandler) {
+            _locKeyHandler = function (e) {
+                var key = e.key || e.keyCode;
+                if (key === 'Escape' || key === 27 || key === 'GoBack') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            };
+            document.addEventListener('keydown', _locKeyHandler, true);
+        }
+    }
+
+    function closeLocationModal() {
+        var el = document.getElementById('kiosk-loc-backdrop');
+        if (el) el.parentNode.removeChild(el);
+        if (_locKeyHandler) {
+            document.removeEventListener('keydown', _locKeyHandler, true);
+            _locKeyHandler = null;
+        }
+    }
+
+    window.openLocationModal  = openLocationModal;
+    window.closeLocationModal = closeLocationModal;
 
     var locationCallbackTimer = null;
 
