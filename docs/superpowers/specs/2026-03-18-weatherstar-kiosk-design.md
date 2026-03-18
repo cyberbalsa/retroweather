@@ -13,7 +13,7 @@ An Android APK kiosk app that embeds the WeatherStar 4000+ (`ws4kp`) weather dis
 
 ## Architecture
 
-A thin Kotlin shell (~200 lines) hosts a WebView that loads a self-contained web layer from bundled assets. The Kotlin layer handles only what the web cannot: screen control, system bar hiding, and a JavaScript bridge for native location. All UI, music, settings, and configuration logic live in HTML/JS.
+A thin Kotlin shell (~200 lines) hosts a WebView that loads a self-contained web layer from bundled assets. The Kotlin layer handles only what the web cannot: screen control, system bar hiding, and a JavaScript bridge for native location. All UI, music, settings, and configuration logic live in HTML/JS written in **ES5** (no ES6+) for compatibility with Android 4.4 KitKat's Chrome 30-based WebView.
 
 ### File Structure
 
@@ -158,7 +158,7 @@ Manual override in settings sets `?loc_mode=manual&lat=X&lon=Y`, skipping the ch
 
 ## Build & Dependencies
 
-- **Min SDK:** 21 (Android 5.0 Lollipop) — covers Android TV gen 1+
+- **Min SDK:** 19 (Android 4.4 KitKat) — covers Android TV gen 1+ and older phones
 - **Target SDK:** 34
 - **Dependencies (app/build.gradle):**
   - `androidx.appcompat:appcompat:1.6.1`

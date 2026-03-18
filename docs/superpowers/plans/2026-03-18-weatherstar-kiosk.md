@@ -116,7 +116,7 @@ android {
 
     defaultConfig {
         applicationId "com.weatherstartv"
-        minSdk 21
+        minSdk 19   // Android 4.4 KitKat
         targetSdk 34
         versionCode 1
         versionName "1.0"
@@ -558,6 +558,7 @@ package com.weatherstartv
 
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.webkit.WebSettings
@@ -639,9 +640,12 @@ class MainActivity : AppCompatActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            // ws4kp loads from file:// but calls HTTPS weather APIs
-            @Suppress("DEPRECATION")
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            // MIXED_CONTENT_ALWAYS_ALLOW added in API 21; not needed on API 19-20
+            // (KitKat WebView allows mixed content by default)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                @Suppress("DEPRECATION")
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            }
             // Allow Archive.org audio to autoplay without user gesture
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_DEFAULT
@@ -753,41 +757,87 @@ Expected: `3 tests passed`
 - [ ] **Step 3: Implement `app/src/main/assets/location.js`**
 
 ```js
-/* location.js — injected into ws4kp page by KioskWebViewClient */
+/* location.js — ES5, compatible with Android 4.4 KitKat (Chrome 30) */
+/* No const/let, no arrow functions, no fetch, no new URL(), no async/await */
 
 (function () {
     'use strict';
 
+    // ── URL param helpers (no URLSearchParams / new URL on KitKat) ──────────
+
+    function getParam(name) {
+        var search = window.location.search.substring(1);
+        var pairs = search.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var idx = pairs[i].indexOf('=');
+            if (idx < 0) continue;
+            var k = decodeURIComponent(pairs[i].substring(0, idx));
+            if (k === name) return decodeURIComponent(pairs[i].substring(idx + 1).replace(/\+/g, ' '));
+        }
+        return null;
+    }
+
+    function setParam(key, value) {
+        var search = window.location.search;
+        var enc = encodeURIComponent(key) + '=' + encodeURIComponent(value);
+        var re = new RegExp('([?&])' + encodeURIComponent(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=[^&]*');
+        if (re.test(search)) {
+            search = search.replace(re, function (m, pre) { return pre + enc; });
+        } else {
+            search = search + (search.length > 1 ? '&' : '?') + enc;
+        }
+        history.replaceState(null, '', window.location.pathname + search);
+    }
+
+    function removeParam(key) {
+        var search = window.location.search;
+        var re = new RegExp('[?&]' + encodeURIComponent(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=[^&]*', 'g');
+        search = search.replace(re, '');
+        if (search.charAt(0) === '&') search = '?' + search.substring(1);
+        history.replaceState(null, '', window.location.pathname + search);
+    }
+
+    // ── Core functions ───────────────────────────────────────────────────────
+
     function buildLatLonParam(lat, lon) {
-        return encodeURIComponent(JSON.stringify({ lat, lon }));
+        return encodeURIComponent(JSON.stringify({ lat: lat, lon: lon }));
     }
 
     function parseManualLatLon(input) {
-        const parts = input.trim().split(',').map(Number);
-        if (parts.length !== 2 || parts.some(isNaN)) return null;
-        const [lat, lon] = parts;
+        var parts = input.trim().split(',');
+        if (parts.length !== 2) return null;
+        var lat = parseFloat(parts[0]);
+        var lon = parseFloat(parts[1]);
+        if (isNaN(lat) || isNaN(lon)) return null;
         if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-        return { lat, lon };
+        return { lat: lat, lon: lon };
     }
 
     function applyLocationAndReload(lat, lon) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('latLon', buildLatLonParam(lat, lon));
-        history.replaceState(null, '', url.toString());
+        setParam('latLon', buildLatLonParam(lat, lon));
         window.location.reload();
     }
 
-    async function tryIpGeo() {
-        try {
-            const resp = await fetch('https://ipapi.co/json/');
-            if (!resp.ok) return false;
-            const data = await resp.json();
-            if (data.latitude && data.longitude) {
-                applyLocationAndReload(data.latitude, data.longitude);
-                return true;
+    function tryIpGeo() {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://ipapi.co/json/', true);
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status === 200) {
+                try {
+                    var data = JSON.parse(xhr.responseText);
+                    if (data.latitude && data.longitude) {
+                        applyLocationAndReload(data.latitude, data.longitude);
+                        return;
+                    }
+                } catch (e) { /* silent */ }
             }
-        } catch (_) { /* silent */ }
-        return false;
+            console.log('[location] All methods failed, ws4kp will show city picker');
+        };
+        xhr.onerror = function () {
+            console.log('[location] IP geo request failed');
+        };
+        xhr.send();
     }
 
     // Called by LocationBridge on GPS success
@@ -796,38 +846,30 @@ Expected: `3 tests passed`
     };
 
     // Called by LocationBridge on GPS failure/denied
-    window.onLocationError = async function () {
-        const ok = await tryIpGeo();
-        if (!ok) {
-            console.log('[location] All methods failed, ws4kp will show city picker');
-        }
+    window.onLocationError = function () {
+        tryIpGeo();
     };
 
     // Called by settings.js Apply when locMode=manual
     window.applyManualLocation = function (latLonStr) {
-        const parsed = parseManualLatLon(latLonStr);
+        var parsed = parseManualLatLon(latLonStr);
         if (!parsed) { console.warn('[location] Invalid input:', latLonStr); return false; }
-        const url = new URL(window.location.href);
-        url.searchParams.set('latLon', buildLatLonParam(parsed.lat, parsed.lon));
-        url.searchParams.set('kiosk_loc_mode', 'manual');
-        history.replaceState(null, '', url.toString());
+        setParam('latLon', buildLatLonParam(parsed.lat, parsed.lon));
+        setParam('kiosk_loc_mode', 'manual');
         window.location.reload();
         return true;
     };
 
     // Called by settings.js "Re-detect" button
     window.redetectLocation = function () {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('latLon');
-        url.searchParams.set('kiosk_loc_mode', 'auto');
-        history.replaceState(null, '', url.toString());
+        removeParam('latLon');
+        setParam('kiosk_loc_mode', 'auto');
         window.location.reload();
     };
 
     function initLocation() {
-        const url = new URL(window.location.href);
-        const locMode = url.searchParams.get('kiosk_loc_mode');
-        const hasLatLon = url.searchParams.has('latLon');
+        var locMode = getParam('kiosk_loc_mode');
+        var hasLatLon = getParam('latLon') !== null;
 
         if (locMode === 'manual' && hasLatLon) {
             console.log('[location] Manual mode with coords, skipping auto-detect');
@@ -837,7 +879,6 @@ Expected: `3 tests passed`
         if (window.Android) {
             window.Android.requestLocation();
         } else {
-            // Fallback for browser testing (no Android bridge)
             window.onLocationError();
         }
     }
@@ -958,60 +999,78 @@ Expected: `3 tests passed`
 - [ ] **Step 3: Implement `app/src/main/assets/music.js`**
 
 ```js
-/* music.js — injected into ws4kp page by KioskWebViewClient */
+/* music.js — ES5, compatible with Android 4.4 KitKat (Chrome 30) */
+/* Uses XHR + DOMParser (both available in Chrome 30) */
 
 (function () {
     'use strict';
 
-    const ARCHIVE_XML = 'https://archive.org/download/weatherscancompletecollection/weatherscancompletecollection_files.xml';
-    const ARCHIVE_BASE = 'https://archive.org/download/weatherscancompletecollection/';
+    var ARCHIVE_XML = 'https://archive.org/download/weatherscancompletecollection/weatherscancompletecollection_files.xml';
+    var ARCHIVE_BASE = 'https://archive.org/download/weatherscancompletecollection/';
 
-    let playlist = [];
-    let currentIndex = 0;
-    let audio = null;
-    let initialized = false;
+    var playlist = [];
+    var currentIndex = 0;
+    var audio = null;
+    var initialized = false;
 
+    function getParam(name) {
+        var search = window.location.search.substring(1);
+        var pairs = search.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var idx = pairs[i].indexOf('=');
+            if (idx < 0) continue;
+            var k = decodeURIComponent(pairs[i].substring(0, idx));
+            if (k === name) return decodeURIComponent(pairs[i].substring(idx + 1).replace(/\+/g, ' '));
+        }
+        return null;
+    }
+
+    // DOMParser is available in Chrome 30 (KitKat) — cleaner than regex
     function parsePlaylistFromXml(xmlStr) {
-        const result = [];
-        const fileRegex = /<file\s+name="([^"]+)"\s+source="original"([\s\S]*?)<\/file>/g;
-        let match;
-        while ((match = fileRegex.exec(xmlStr)) !== null) {
-            const filename = match[1];
-            const body = match[2];
-            if (!/<format>VBR MP3<\/format>/.test(body)) continue;
-            const titleMatch = body.match(/<title>([^<]+)<\/title>/);
-            result.push({
-                url: ARCHIVE_BASE + encodeURIComponent(filename),
-                title: titleMatch ? titleMatch[1] : filename.replace(/\.\w+$/, '')
-            });
+        var result = [];
+        try {
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(xmlStr, 'text/xml');
+            var files = doc.getElementsByTagName('file');
+            for (var i = 0; i < files.length; i++) {
+                var file = files[i];
+                if (file.getAttribute('source') !== 'original') continue;
+                var formatEls = file.getElementsByTagName('format');
+                if (!formatEls.length || formatEls[0].textContent !== 'VBR MP3') continue;
+                var filename = file.getAttribute('name');
+                var titleEls = file.getElementsByTagName('title');
+                var title = titleEls.length ? titleEls[0].textContent : filename.replace(/\.\w+$/, '');
+                result.push({ url: ARCHIVE_BASE + encodeURIComponent(filename), title: title });
+            }
+        } catch (e) {
+            console.warn('[music] XML parse error:', e.message);
         }
         return result;
     }
 
     function fisherYatesShuffle(arr) {
-        const a = arr.slice();
-        for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
+        var a = arr.slice();
+        for (var i = a.length - 1; i > 0; i--) {
+            var j = Math.floor(Math.random() * (i + 1));
+            var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
         }
         return a;
     }
 
     function getParams() {
-        const p = new URL(window.location.href).searchParams;
         return {
-            enabled: p.get('kiosk_music') !== '0',
-            volume: parseFloat(p.get('kiosk_vol') ?? '0.7'),
-            shuffle: p.get('kiosk_shuffle') !== '0'
+            enabled: getParam('kiosk_music') !== '0',
+            volume: parseFloat(getParam('kiosk_vol') || '0.7'),
+            shuffle: getParam('kiosk_shuffle') !== '0'
         };
     }
 
     function playTrack(index) {
         if (!audio || playlist.length === 0) return;
         currentIndex = index % playlist.length;
-        const track = playlist[currentIndex];
+        var track = playlist[currentIndex];
         audio.src = track.url;
-        audio.play().catch(() => {});
+        try { audio.play(); } catch (e) { /* autoplay blocked */ }
         if (window._settingsUpdateTrack) window._settingsUpdateTrack(track.title);
     }
 
@@ -1019,31 +1078,42 @@ Expected: `3 tests passed`
         playTrack((currentIndex + 1) % playlist.length);
     }
 
-    async function initMusic() {
+    function initMusic() {
         if (initialized) return;
         initialized = true;
 
-        const params = getParams();
+        var params = getParams();
         if (!params.enabled) return;
 
         audio = new Audio();
         audio.volume = Math.max(0, Math.min(1, params.volume));
         audio.addEventListener('ended', nextTrack);
-        audio.addEventListener('error', () => setTimeout(nextTrack, 1000));
+        audio.addEventListener('error', function () { setTimeout(nextTrack, 1000); });
 
-        try {
-            const resp = await fetch(ARCHIVE_XML);
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const xml = await resp.text();
-            let tracks = parsePlaylistFromXml(xml);
-            if (tracks.length === 0) throw new Error('No tracks found');
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', ARCHIVE_XML, true);
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status !== 200) {
+                console.warn('[music] XML fetch failed, status:', xhr.status);
+                audio = null;
+                return;
+            }
+            var tracks = parsePlaylistFromXml(xhr.responseText);
+            if (tracks.length === 0) {
+                console.warn('[music] No tracks found in XML');
+                audio = null;
+                return;
+            }
             if (params.shuffle) tracks = fisherYatesShuffle(tracks);
             playlist = tracks;
             playTrack(0);
-        } catch (err) {
-            console.warn('[music] Playlist load failed, music disabled:', err.message);
+        };
+        xhr.onerror = function () {
+            console.warn('[music] XML request failed, music disabled');
             audio = null;
-        }
+        };
+        xhr.send();
     }
 
     window.musicSetVolume = function (vol) {
@@ -1052,12 +1122,12 @@ Expected: `3 tests passed`
 
     window.musicSetEnabled = function (enabled) {
         if (!audio) return;
-        if (enabled) audio.play().catch(() => {});
+        if (enabled) { try { audio.play(); } catch (e) {} }
         else audio.pause();
     };
 
     window.musicGetCurrentTitle = function () {
-        return playlist[currentIndex]?.title ?? '';
+        return (playlist[currentIndex] && playlist[currentIndex].title) ? playlist[currentIndex].title : '';
     };
 
     window.initMusic = initMusic;
@@ -1166,238 +1236,278 @@ Expected: `3 tests passed`
 - [ ] **Step 3: Implement `app/src/main/assets/settings.js`**
 
 ```js
-/* settings.js — injected into ws4kp page by KioskWebViewClient */
+/* settings.js — ES5, compatible with Android 4.4 KitKat (Chrome 30) */
+/* No const/let, no template literals, no new URL(), no .find(), no .closest() */
+/* CSS: no gap/min() — uses margin/max-width; flexbox with -webkit- prefixes */
 
 (function () {
     'use strict';
 
-    const CSS = `
-#kiosk-backdrop {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.75); z-index: 99999;
-    align-items: center; justify-content: center;
-}
-#kiosk-backdrop.open { display: flex; }
-#kiosk-modal {
-    background: #0d1b2a; border: 1px solid #1e3a5f; border-radius: 12px;
-    padding: 24px; width: min(480px, 90vw); max-height: 80vh;
-    overflow-y: auto; color: #e0e8f0; font-family: sans-serif;
-}
-#kiosk-modal h2 { margin: 0 0 16px; font-size: 1.1rem; color: #7cb9e8; }
-.k-section { margin-bottom: 16px; border-bottom: 1px solid #1e3a5f; padding-bottom: 12px; }
-.k-section:last-child { border-bottom: none; }
-.k-section h3 { margin: 0 0 8px; font-size: 0.8rem; color: #9ab; text-transform: uppercase; letter-spacing: 0.05em; }
-.k-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 0.9rem; }
-.k-row label { flex: 1; }
-.k-radio { display: flex; gap: 16px; }
-.k-radio label { display: flex; align-items: center; gap: 4px; cursor: pointer; flex: unset; }
-input[type=range] { flex: 2; accent-color: #7cb9e8; }
-input[type=text] {
-    background: #1e3a5f; border: 1px solid #3a6a9f; border-radius: 4px;
-    color: #e0e8f0; padding: 4px 8px; font-size: 0.9rem; flex: 2;
-}
-select {
-    background: #1e3a5f; border: 1px solid #3a6a9f; border-radius: 4px;
-    color: #e0e8f0; padding: 4px 8px; font-size: 0.9rem;
-}
-#kiosk-track { font-size: 0.75rem; color: #7cb9e8; font-style: italic; margin: 4px 0 0; min-height: 1em; }
-#kiosk-apply {
-    background: #1e5a9f; color: white; border: none; border-radius: 6px;
-    padding: 10px 24px; font-size: 0.95rem; cursor: pointer; width: 100%; margin-top: 8px;
-}
-#kiosk-apply:focus, #kiosk-apply:hover { background: #2a7abf; }
-*:focus-visible { outline: 2px solid #7cb9e8; outline-offset: 2px; }
-.k-btn-sm {
-    font-size: 0.8rem; padding: 4px 10px; background: #1e3a5f;
-    border: 1px solid #3a6a9f; border-radius: 4px; color: #e0e8f0; cursor: pointer;
-}`;
+    var CSS = '#kiosk-backdrop {'
+        + 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;'
+        + 'background:rgba(0,0,0,0.75);z-index:99999;'
+        + '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
+        + '-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;'
+        + '}'
+        + '#kiosk-backdrop.open{display:-webkit-box;display:-webkit-flex;display:flex;}'
+        + '#kiosk-modal{'
+        + 'background:#0d1b2a;border:1px solid #1e3a5f;border-radius:12px;'
+        + 'padding:24px;width:90vw;max-width:480px;max-height:80vh;'
+        + 'overflow-y:auto;color:#e0e8f0;font-family:sans-serif;'
+        + '-webkit-box-sizing:border-box;box-sizing:border-box;'
+        + '}'
+        + '#kiosk-modal h2{margin:0 0 16px;font-size:1.1em;color:#7cb9e8;}'
+        + '.k-section{margin-bottom:16px;border-bottom:1px solid #1e3a5f;padding-bottom:12px;}'
+        + '.k-section h3{margin:0 0 8px;font-size:0.8em;color:#9ab;text-transform:uppercase;}'
+        + '.k-row{display:-webkit-box;display:-webkit-flex;display:flex;'
+        + '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
+        + 'margin:6px 0;font-size:0.9em;}'
+        + '.k-row>label:first-child{-webkit-box-flex:1;-webkit-flex:1;flex:1;}'
+        + '.k-radio label{-webkit-box-flex:0;-webkit-flex:none;flex:none;margin-right:16px;cursor:pointer;}'
+        + 'input[type=range]{-webkit-box-flex:2;-webkit-flex:2;flex:2;margin-left:8px;}'
+        + 'input[type=text]{'
+        + 'background:#1e3a5f;border:1px solid #3a6a9f;border-radius:4px;'
+        + 'color:#e0e8f0;padding:4px 8px;font-size:0.9em;'
+        + '-webkit-box-flex:2;-webkit-flex:2;flex:2;margin-left:8px;'
+        + '}'
+        + 'select{background:#1e3a5f;border:1px solid #3a6a9f;border-radius:4px;'
+        + 'color:#e0e8f0;padding:4px 8px;font-size:0.9em;margin-left:8px;}'
+        + '#kiosk-track{font-size:0.75em;color:#7cb9e8;font-style:italic;margin:4px 0 0;min-height:1em;}'
+        + '#kiosk-apply{background:#1e5a9f;color:white;border:none;border-radius:6px;'
+        + 'padding:10px 24px;font-size:0.95em;cursor:pointer;width:100%;margin-top:8px;}'
+        + '#kiosk-apply:focus{background:#2a7abf;outline:2px solid #7cb9e8;}'
+        + '.k-btn-sm{font-size:0.8em;padding:4px 10px;background:#1e3a5f;'
+        + 'border:1px solid #3a6a9f;border-radius:4px;color:#e0e8f0;cursor:pointer;}';
 
-    const HTML = `
-<div id="kiosk-backdrop">
-  <div id="kiosk-modal" role="dialog" aria-label="WeatherStar Settings">
-    <h2>&#9881; WeatherStar Settings</h2>
-    <div class="k-section">
-      <h3>Location</h3>
-      <div class="k-row k-radio">
-        <label><input type="radio" name="k-loc" value="auto" tabindex="0"> Auto-detect</label>
-        <label><input type="radio" name="k-loc" value="manual" tabindex="0"> Manual</label>
-      </div>
-      <div class="k-row" id="k-manual-row" style="display:none">
-        <label for="k-latlon">Lat,Lon:</label>
-        <input type="text" id="k-latlon" placeholder="40.7128,-74.0060" tabindex="0">
-      </div>
-      <div class="k-row">
-        <button id="k-redetect" class="k-btn-sm" tabindex="0">Re-detect location</button>
-      </div>
-    </div>
-    <div class="k-section">
-      <h3>Music</h3>
-      <div class="k-row">
-        <label for="k-music">Enabled</label>
-        <input type="checkbox" id="k-music" tabindex="0">
-      </div>
-      <div class="k-row k-radio">
-        <label><input type="radio" name="k-play" value="sequential" tabindex="0"> Sequential</label>
-        <label><input type="radio" name="k-play" value="shuffle" tabindex="0"> Shuffle</label>
-      </div>
-      <div class="k-row">
-        <label for="k-vol">Volume</label>
-        <input type="range" id="k-vol" min="0" max="100" tabindex="0">
-      </div>
-      <div id="kiosk-track"></div>
-    </div>
-    <div class="k-section">
-      <h3>Display</h3>
-      <div class="k-row">
-        <label for="k-wide">Widescreen (16:9)</label>
-        <input type="checkbox" id="k-wide" tabindex="0">
-      </div>
-      <div class="k-row">
-        <label for="k-units">Units</label>
-        <select id="k-units" tabindex="0">
-          <option value="us">US (°F)</option>
-          <option value="si">Metric (°C)</option>
-        </select>
-      </div>
-      <div class="k-row">
-        <label for="k-speed">Speed</label>
-        <select id="k-speed" tabindex="0">
-          <option value="0.5">Very Fast</option>
-          <option value="0.75">Fast</option>
-          <option value="1.0">Normal</option>
-          <option value="1.25">Slow</option>
-          <option value="1.5">Very Slow</option>
-        </select>
-      </div>
-    </div>
-    <button id="kiosk-apply" tabindex="0">Apply</button>
-  </div>
-</div>`;
+    var HTML = '<div id="kiosk-backdrop">'
+        + '<div id="kiosk-modal" role="dialog">'
+        + '<h2>&#9881; WeatherStar Settings</h2>'
+        + '<div class="k-section"><h3>Location</h3>'
+        + '<div class="k-row k-radio">'
+        + '<label><input type="radio" name="k-loc" value="auto" tabindex="0"> Auto-detect</label>'
+        + '<label><input type="radio" name="k-loc" value="manual" tabindex="0"> Manual</label>'
+        + '</div>'
+        + '<div class="k-row" id="k-manual-row" style="display:none">'
+        + '<label for="k-latlon">Lat,Lon:</label>'
+        + '<input type="text" id="k-latlon" placeholder="40.7128,-74.0060" tabindex="0">'
+        + '</div>'
+        + '<div class="k-row"><button id="k-redetect" class="k-btn-sm" tabindex="0">Re-detect location</button></div>'
+        + '</div>'
+        + '<div class="k-section"><h3>Music</h3>'
+        + '<div class="k-row"><label for="k-music">Enabled</label><input type="checkbox" id="k-music" tabindex="0"></div>'
+        + '<div class="k-row k-radio">'
+        + '<label><input type="radio" name="k-play" value="sequential" tabindex="0"> Sequential</label>'
+        + '<label><input type="radio" name="k-play" value="shuffle" tabindex="0"> Shuffle</label>'
+        + '</div>'
+        + '<div class="k-row"><label for="k-vol">Volume</label><input type="range" id="k-vol" min="0" max="100" tabindex="0"></div>'
+        + '<div id="kiosk-track"></div>'
+        + '</div>'
+        + '<div class="k-section"><h3>Display</h3>'
+        + '<div class="k-row"><label for="k-wide">Widescreen (16:9)</label><input type="checkbox" id="k-wide" tabindex="0"></div>'
+        + '<div class="k-row"><label for="k-units">Units</label>'
+        + '<select id="k-units" tabindex="0"><option value="us">US (F)</option><option value="si">Metric (C)</option></select>'
+        + '</div>'
+        + '<div class="k-row"><label for="k-speed">Speed</label>'
+        + '<select id="k-speed" tabindex="0">'
+        + '<option value="0.5">Very Fast</option><option value="0.75">Fast</option>'
+        + '<option value="1.0">Normal</option><option value="1.25">Slow</option><option value="1.5">Very Slow</option>'
+        + '</select></div>'
+        + '</div>'
+        + '<button id="kiosk-apply" tabindex="0">Apply</button>'
+        + '</div></div>';
+
+    // ── URL param helpers ────────────────────────────────────────────────────
+
+    function getParam(name) {
+        var search = window.location.search.substring(1);
+        var pairs = search.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var idx = pairs[i].indexOf('=');
+            if (idx < 0) continue;
+            var k = decodeURIComponent(pairs[i].substring(0, idx));
+            if (k === name) return decodeURIComponent(pairs[i].substring(idx + 1).replace(/\+/g, ' '));
+        }
+        return null;
+    }
+
+    function setParam(key, value) {
+        var search = window.location.search;
+        var enc = encodeURIComponent(key) + '=' + encodeURIComponent(value);
+        var safeKey = encodeURIComponent(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var re = new RegExp('([?&])' + safeKey + '=[^&]*');
+        if (re.test(search)) {
+            search = search.replace(re, function (m, pre) { return pre + enc; });
+        } else {
+            search = search + (search.length > 1 ? '&' : '?') + enc;
+        }
+        history.replaceState(null, '', window.location.pathname + search);
+    }
+
+    function removeParam(key) {
+        var search = window.location.search;
+        var safeKey = encodeURIComponent(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var re = new RegExp('[?&]' + safeKey + '=[^&]*', 'g');
+        search = search.replace(re, '');
+        if (search.charAt(0) === '&') search = '?' + search.substring(1);
+        history.replaceState(null, '', window.location.pathname + search);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    // Element.closest() not in Chrome 30 — walk parents manually
+    function isInsideId(el, id) {
+        while (el) {
+            if (el.id === id) return true;
+            el = el.parentElement || el.parentNode;
+        }
+        return false;
+    }
+
+    function findCheckedRadio(name) {
+        var radios = document.querySelectorAll('input[name="' + name + '"]');
+        for (var i = 0; i < radios.length; i++) {
+            if (radios[i].checked) return radios[i];
+        }
+        return null;
+    }
+
+    // ── Param read/write ─────────────────────────────────────────────────────
 
     function readParams() {
-        const p = new URL(window.location.href).searchParams;
         return {
-            music: p.get('kiosk_music') !== '0',
-            volume: parseFloat(p.get('kiosk_vol') ?? '0.7'),
-            shuffle: p.get('kiosk_shuffle') !== '0',
-            locMode: p.get('kiosk_loc_mode') ?? 'auto',
-            latLon: p.get('latLon') ?? '',
-            wide: p.get('settings-wide-checkbox') === 'true',
-            units: p.get('settings-units-select') ?? 'us',
-            speed: p.get('settings-speed-select') ?? '1.0',
+            music:   getParam('kiosk_music') !== '0',
+            volume:  parseFloat(getParam('kiosk_vol') || '0.7'),
+            shuffle: getParam('kiosk_shuffle') !== '0',
+            locMode: getParam('kiosk_loc_mode') || 'auto',
+            latLon:  getParam('latLon') || '',
+            wide:    getParam('settings-wide-checkbox') === 'true',
+            units:   getParam('settings-units-select') || 'us',
+            speed:   getParam('settings-speed-select') || '1.0'
         };
     }
 
     function applySettings(values) {
-        const u = new URL(window.location.href);
-        u.searchParams.set('kiosk_music', values.music ? '1' : '0');
-        u.searchParams.set('kiosk_vol', String(values.volume));
-        u.searchParams.set('kiosk_shuffle', values.shuffle ? '1' : '0');
-        u.searchParams.set('kiosk_loc_mode', values.locMode);
-        u.searchParams.set('settings-wide-checkbox', values.wide ? 'true' : 'false');
-        u.searchParams.set('settings-units-select', values.units);
-        u.searchParams.set('settings-speed-select', values.speed);
+        setParam('kiosk_music',            values.music   ? '1' : '0');
+        setParam('kiosk_vol',              String(values.volume));
+        setParam('kiosk_shuffle',          values.shuffle ? '1' : '0');
+        setParam('kiosk_loc_mode',         values.locMode);
+        setParam('settings-wide-checkbox', values.wide    ? 'true' : 'false');
+        setParam('settings-units-select',  values.units);
+        setParam('settings-speed-select',  values.speed);
 
         if (values.locMode === 'manual' && values.latLon && window.applyManualLocation) {
-            // applyManualLocation handles replaceState + reload
             window.applyManualLocation(values.latLon);
             return;
         }
-        if (values.locMode === 'auto') u.searchParams.delete('latLon');
-        history.replaceState(null, '', u.toString());
+        if (values.locMode === 'auto') removeParam('latLon');
         window.location.reload();
     }
 
+    // ── Init ─────────────────────────────────────────────────────────────────
+
     function initSettings() {
-        const style = document.createElement('style');
-        style.textContent = CSS;
+        var style = document.createElement('style');
+        style.type = 'text/css';
+        style.appendChild(document.createTextNode(CSS));
         document.head.appendChild(style);
 
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = HTML;
-        document.body.appendChild(wrapper);
+        // insertAdjacentHTML inserts compile-time constant markup, not user input
+        document.body.insertAdjacentHTML('beforeend', HTML);
 
-        const backdrop = document.getElementById('kiosk-backdrop');
-        const locRadios = document.querySelectorAll('input[name="k-loc"]');
-        const manualRow = document.getElementById('k-manual-row');
-        const latLonInput = document.getElementById('k-latlon');
-        const musicCheck = document.getElementById('k-music');
-        const volSlider = document.getElementById('k-vol');
-        const playRadios = document.querySelectorAll('input[name="k-play"]');
-        const wideCheck = document.getElementById('k-wide');
-        const unitsSelect = document.getElementById('k-units');
-        const speedSelect = document.getElementById('k-speed');
-        const applyBtn = document.getElementById('kiosk-apply');
-        const redetectBtn = document.getElementById('k-redetect');
-        const trackLabel = document.getElementById('kiosk-track');
+        var backdrop    = document.getElementById('kiosk-backdrop');
+        var manualRow   = document.getElementById('k-manual-row');
+        var latLonInput = document.getElementById('k-latlon');
+        var musicCheck  = document.getElementById('k-music');
+        var volSlider   = document.getElementById('k-vol');
+        var wideCheck   = document.getElementById('k-wide');
+        var unitsSelect = document.getElementById('k-units');
+        var speedSelect = document.getElementById('k-speed');
+        var applyBtn    = document.getElementById('kiosk-apply');
+        var redetectBtn = document.getElementById('k-redetect');
+        var trackLabel  = document.getElementById('kiosk-track');
 
         function populateForm() {
-            const p = readParams();
-            locRadios.forEach(r => { r.checked = r.value === p.locMode; });
-            manualRow.style.display = p.locMode === 'manual' ? 'flex' : 'none';
+            var p = readParams();
+            var locRadios = document.querySelectorAll('input[name="k-loc"]');
+            for (var i = 0; i < locRadios.length; i++) {
+                locRadios[i].checked = locRadios[i].value === p.locMode;
+            }
+            manualRow.style.display = (p.locMode === 'manual') ? 'flex' : 'none';
             if (p.latLon) {
                 try {
-                    const coord = JSON.parse(decodeURIComponent(p.latLon));
+                    var coord = JSON.parse(decodeURIComponent(p.latLon));
                     latLonInput.value = coord.lat + ',' + coord.lon;
-                } catch (_) {}
+                } catch (e) {}
             }
             musicCheck.checked = p.music;
-            volSlider.value = Math.round(p.volume * 100);
-            playRadios.forEach(r => { r.checked = r.value === (p.shuffle ? 'shuffle' : 'sequential'); });
-            wideCheck.checked = p.wide;
-            unitsSelect.value = p.units;
-            speedSelect.value = p.speed;
+            volSlider.value    = Math.round(p.volume * 100);
+            var playRadios = document.querySelectorAll('input[name="k-play"]');
+            for (var j = 0; j < playRadios.length; j++) {
+                playRadios[j].checked = playRadios[j].value === (p.shuffle ? 'shuffle' : 'sequential');
+            }
+            wideCheck.checked  = p.wide;
+            unitsSelect.value  = p.units;
+            speedSelect.value  = p.speed;
             if (window.musicGetCurrentTitle) trackLabel.textContent = window.musicGetCurrentTitle();
         }
 
-        locRadios.forEach(r => r.addEventListener('change', () => {
-            manualRow.style.display = r.value === 'manual' && r.checked ? 'flex' : 'none';
-        }));
+        var locRadiosAll = document.querySelectorAll('input[name="k-loc"]');
+        for (var li = 0; li < locRadiosAll.length; li++) {
+            locRadiosAll[li].addEventListener('change', function () {
+                var ch = findCheckedRadio('k-loc');
+                manualRow.style.display = (ch && ch.value === 'manual') ? 'flex' : 'none';
+            });
+        }
 
-        volSlider.addEventListener('input', () => {
+        // KitKat fires 'change', modern browsers fire 'input' — handle both
+        function onVolChange() {
             if (window.musicSetVolume) window.musicSetVolume(volSlider.value / 100);
-        });
+        }
+        volSlider.addEventListener('input', onVolChange);
+        volSlider.addEventListener('change', onVolChange);
 
-        applyBtn.addEventListener('click', () => {
+        applyBtn.addEventListener('click', function () {
+            var lc = findCheckedRadio('k-loc');
+            var pc = findCheckedRadio('k-play');
             applySettings({
-                music: musicCheck.checked,
-                volume: volSlider.value / 100,
-                shuffle: [...playRadios].find(r => r.checked)?.value === 'shuffle',
-                locMode: [...locRadios].find(r => r.checked)?.value ?? 'auto',
-                latLon: latLonInput.value.trim(),
-                wide: wideCheck.checked,
-                units: unitsSelect.value,
-                speed: speedSelect.value,
+                music:   musicCheck.checked,
+                volume:  volSlider.value / 100,
+                shuffle: pc ? pc.value === 'shuffle' : true,
+                locMode: lc ? lc.value : 'auto',
+                latLon:  latLonInput.value.trim(),
+                wide:    wideCheck.checked,
+                units:   unitsSelect.value,
+                speed:   speedSelect.value
             });
         });
 
-        redetectBtn.addEventListener('click', () => {
+        redetectBtn.addEventListener('click', function () {
             if (window.redetectLocation) window.redetectLocation();
         });
 
-        backdrop.addEventListener('click', e => {
-            if (e.target === backdrop) closeSettings();
+        backdrop.addEventListener('click', function (e) {
+            if (!isInsideId(e.target, 'kiosk-modal')) closeSettings();
         });
 
-        document.addEventListener('keydown', e => {
-            if ((e.key === 'Escape' || e.key === 'GoBack') && backdrop.classList.contains('open')) {
-                closeSettings();
-            }
+        document.addEventListener('keydown', function (e) {
+            var key = e.key || e.keyCode;
+            var isEsc = (key === 'Escape' || key === 27 || key === 'GoBack');
+            if (isEsc && backdrop.className.indexOf('open') !== -1) closeSettings();
         });
 
         function openSettings() {
             populateForm();
-            backdrop.classList.add('open');
+            backdrop.className += ' open';
             applyBtn.focus();
         }
 
         function closeSettings() {
-            backdrop.classList.remove('open');
+            backdrop.className = backdrop.className.replace(/\bopen\b/g, '').replace(/\s+/g, ' ').trim();
         }
 
-        window.openKioskSettings = openSettings;
+        window.openKioskSettings  = openSettings;
         window.closeKioskSettings = closeSettings;
-        window._settingsUpdateTrack = t => { trackLabel.textContent = t; };
+        window._settingsUpdateTrack = function (t) { trackLabel.textContent = t; };
     }
 
     window.initSettings = initSettings;
@@ -1423,16 +1533,26 @@ Bootstrap script: attaches long-press listener, calls init functions in order.
 - [ ] **Step 1: Implement `app/src/main/assets/overlay.js`**
 
 ```js
-/* overlay.js — injected last by KioskWebViewClient */
+/* overlay.js — ES5, compatible with Android 4.4 KitKat (Chrome 30) */
+/* Note: passive event listener option silently ignored on Chrome < 51 — that's fine */
 
 (function () {
     'use strict';
 
-    let pressTimer = null;
-    let pressing = false;
+    var pressTimer = null;
+    var pressing = false;
+
+    function isInsideBackdrop(el) {
+        // Element.closest() not in Chrome 30 — walk parents manually
+        while (el) {
+            if (el.id === 'kiosk-backdrop') return true;
+            el = el.parentElement || el.parentNode;
+        }
+        return false;
+    }
 
     function startPress(target) {
-        if (target.closest && target.closest('#kiosk-backdrop')) return;
+        if (isInsideBackdrop(target)) return;
         pressing = true;
         pressTimer = setTimeout(function () {
             if (pressing && window.openKioskSettings) window.openKioskSettings();
@@ -1444,18 +1564,21 @@ Bootstrap script: attaches long-press listener, calls init functions in order.
         if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     }
 
-    document.addEventListener('touchstart', e => startPress(e.target), { passive: true });
-    document.addEventListener('touchmove', cancelPress, { passive: true });
-    document.addEventListener('touchend', cancelPress, { passive: true });
-    document.addEventListener('touchcancel', cancelPress, { passive: true });
-    document.addEventListener('mousedown', e => startPress(e.target));
-    document.addEventListener('mouseup', cancelPress);
+    // Touch events (phone/tablet)
+    document.addEventListener('touchstart',  function (e) { startPress(e.target); });
+    document.addEventListener('touchmove',   cancelPress);
+    document.addEventListener('touchend',    cancelPress);
+    document.addEventListener('touchcancel', cancelPress);
+
+    // Mouse events (TV remote / D-pad / desktop testing)
+    document.addEventListener('mousedown', function (e) { startPress(e.target); });
+    document.addEventListener('mouseup',   cancelPress);
     document.addEventListener('mousemove', cancelPress);
 
-    // Bootstrap: settings creates DOM first, then location and music run
+    // Bootstrap order: settings creates DOM first, then location and music
     if (window.initSettings) window.initSettings();
     if (window.initLocation) window.initLocation();
-    if (window.initMusic) window.initMusic();
+    if (window.initMusic)    window.initMusic();
 
     console.log('[overlay] WeatherStar Kiosk overlay ready');
 })();
@@ -1470,15 +1593,136 @@ git commit -m "feat: overlay.js bootstrap with long-press and module init"
 
 ---
 
-## Task 11: Build, Verify, and Ship
+## Task 11: Linting and KitKat Compatibility Checks
 
-- [ ] **Step 1: Run all JS tests**
+**Files:**
+- Create: `.eslintrc.json`
+- Create: `package.json` (JS dev tooling only)
 
-```bash
-node tests/location.test.js && node tests/music.test.js && node tests/settings.test.js
+Catch any ES6+ syntax that slipped into the JS assets before runtime, and verify the Android Kotlin build targets API 19 correctly.
+
+- [ ] **Step 1: Create `package.json` for JS dev tooling**
+
+```json
+{
+  "name": "weatherstar-kiosk-tools",
+  "private": true,
+  "scripts": {
+    "lint": "eslint app/src/main/assets/*.js",
+    "test": "node tests/location.test.js && node tests/music.test.js && node tests/settings.test.js"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}
 ```
 
-Expected: All test suites report `tests passed`.
+- [ ] **Step 2: Install ESLint**
+
+```bash
+npm install
+```
+
+- [ ] **Step 3: Create `.eslintrc.json` — enforce ES5 syntax**
+
+```json
+{
+  "env": {
+    "browser": true,
+    "es5": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 5
+  },
+  "rules": {
+    "no-var": "off",
+    "prefer-const": "off",
+    "no-undef": "warn"
+  }
+}
+```
+
+With `ecmaVersion: 5`, ESLint will error on any ES6+ syntax (`const`, `let`, arrow functions, template literals, destructuring, spread, `async`/`await`, etc.).
+
+- [ ] **Step 4: Run linter on all JS assets**
+
+```bash
+npm run lint
+```
+
+Expected: No errors. If any ES6 syntax was missed, fix it and re-run.
+
+Common errors to fix:
+- `Parsing error: Unexpected token const` → change to `var`
+- `Parsing error: Unexpected token =>` → change to `function()`
+- `Parsing error: Unexpected template literal` → change to string concatenation
+- `Parsing error: Unexpected token ...` → change to `Array.prototype.slice.call()`
+
+- [ ] **Step 5: Run JS unit tests**
+
+```bash
+npm test
+```
+
+Expected: All tests pass.
+
+- [ ] **Step 6: Verify Android minSdk is 19**
+
+```bash
+grep -n "minSdk" app/build.gradle
+```
+
+Expected output:
+```
+        minSdk 19   // Android 4.4 KitKat
+```
+
+- [ ] **Step 7: Run Android lint**
+
+```bash
+./gradlew :app:lint 2>&1 | grep -E "(ERROR|WARNING|minSdk)" | head -20
+```
+
+Review any warnings about API levels. Warnings about APIs used above `minSdk 19` must be addressed:
+- `mixedContentMode` — already guarded with `Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP` ✓
+- `WebView.setWebContentsDebuggingEnabled` — available since API 19 ✓
+- `evaluateJavascript` — available since API 19 ✓
+
+- [ ] **Step 8: Note ws4kp webpack compatibility**
+
+ws4kp bundles its JS with webpack. On KitKat (Chrome 30), the bundled output must be ES5.
+Check ws4kp's webpack config after cloning:
+
+```bash
+cat /tmp/ws4kp/webpack.config.* 2>/dev/null | grep -E "(target|browserslist)"
+```
+
+If the output targets modern browsers only, add a `browserslist` to ws4kp's `package.json` before building:
+```
+"browserslist": ["Android >= 4.4", "Chrome >= 30"]
+```
+Then rebuild (`npm run build`). If ws4kp's webpack uses Babel, this will transpile to ES5.
+
+If ws4kp's build cannot be transpiled to ES5, KitKat support is limited to the overlay JS (our code) but ws4kp itself may not render correctly on Chrome 30.
+
+- [ ] **Step 9: Commit lint config**
+
+```bash
+git add .eslintrc.json package.json package-lock.json
+git commit -m "chore: add ESLint for ES5 enforcement on KitKat-compatible JS"
+```
+
+---
+
+## Task 12: Build, Verify, and Ship
+
+- [ ] **Step 1: Run lint and all JS tests**
+
+```bash
+npm run lint && npm test
+```
+
+Expected: No lint errors; all test suites report `tests passed`.
 
 - [ ] **Step 2: Generate gradle wrapper if not present**
 
