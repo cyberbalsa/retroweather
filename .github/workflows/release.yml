@@ -46,6 +46,11 @@ jobs:
       - name: Assemble release
         run: ./gradlew assembleRelease bundleRelease
 
+      - name: Add Android build-tools to PATH
+        run: |
+          BUILD_TOOLS_DIR="$(ls -d "$ANDROID_SDK_ROOT/build-tools"/*/ | sort -V | tail -1)"
+          echo "$BUILD_TOOLS_DIR" >> "$GITHUB_PATH"
+
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/keystore.jks"
@@ -70,13 +75,16 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          printf '%s' "$STORE_PASSWORD" > "$RUNNER_TEMP/store.pwd"
+          printf '%s' "$KEY_PASSWORD"   > "$RUNNER_TEMP/key.pwd"
           jarsigner \
             -keystore "$RUNNER_TEMP/keystore.jks" \
-            -storepass "$STORE_PASSWORD" \
-            -keypass "$KEY_PASSWORD" \
+            -storepass:file "$RUNNER_TEMP/store.pwd" \
+            -keypass:file   "$RUNNER_TEMP/key.pwd" \
             -signedjar app/build/outputs/bundle/release/app-release-signed.aab \
             app/build/outputs/bundle/release/app-release.aab \
             "$KEY_ALIAS"
+          rm -f "$RUNNER_TEMP/store.pwd" "$RUNNER_TEMP/key.pwd"
 
       - name: Verify APK signature
         run: |
@@ -85,7 +93,7 @@ jobs:
 
       - name: Clean up keystore
         if: always()
-        run: rm -f "$RUNNER_TEMP/keystore.jks"
+        run: rm -f "$RUNNER_TEMP/keystore.jks" "$RUNNER_TEMP/store.pwd" "$RUNNER_TEMP/key.pwd"
 
       - name: Create GitHub Release
         env:
