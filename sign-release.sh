@@ -28,10 +28,16 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 # ── Install dependencies ──────────────────────────────────────────────────────
 install_deps() {
     local pkgs=()
-    command -v gh        &>/dev/null || pkgs+=(gh)
-    command -v jarsigner &>/dev/null || pkgs+=(java-17-openjdk)
-    python3 -c "import fido2"         2>/dev/null || pkgs+=(python3-fido2)
-    python3 -c "import cryptography"  2>/dev/null || pkgs+=(python3-cryptography)
+    command -v gh &>/dev/null || pkgs+=(gh)
+
+    # jarsigner lives in the JDK (devel), not the JRE.
+    # Use java-latest-openjdk-devel so it works on Fedora 38-43+ regardless of version.
+    if ! command -v jarsigner &>/dev/null; then
+        pkgs+=(java-latest-openjdk-devel)
+    fi
+
+    python3 -c "import fido2"        2>/dev/null || pkgs+=(python3-fido2)
+    python3 -c "import cryptography" 2>/dev/null || pkgs+=(python3-cryptography)
 
     if [[ ${#pkgs[@]} -gt 0 ]]; then
         info "Installing: ${pkgs[*]}"
