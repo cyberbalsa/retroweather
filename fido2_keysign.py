@@ -469,11 +469,16 @@ def _do_sign_apk(private_key, src: str, dst: str):
         print("apksigner not found — falling back to JAR (v1) signing.", file=sys.stderr)
         _do_sign_aab(private_key, src, dst)
         return
-    with _TempKey(private_key) as key_path:
+    # Use PKCS12 keystore (--ks) instead of raw --key/--cert: apksigner 36 on
+    # Java 21 with Conscrypt fails to parse PKCS8 PEM directly (native lib
+    # loading failure breaks the EC KeyFactory), but loads PKCS12 reliably.
+    cert = _load_cert()
+    with _TempKeystore(private_key, cert=cert) as (ks_path, ks_pass):
         subprocess.run([
             apksigner, 'sign',
-            '--key', key_path,
-            '--cert', str(CERT_FILE),
+            '--ks', ks_path,
+            '--ks-pass', f'pass:{ks_pass}',
+            '--ks-key-alias', 'key0',
             '--out', dst,
             src,
         ], check=True)
