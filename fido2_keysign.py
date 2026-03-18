@@ -107,13 +107,59 @@ def _best_pin_protocol(ctap):
     return PinProtocolV2() if 2 in versions else PinProtocolV1()
 
 
+def _ensure_pin(ctap) -> str:
+    """
+    Return the YubiKey PIN, prompting the user as needed.
+    If no PIN is set, walk the user through setting one (required for resident credentials).
+    """
+    import getpass
+    info = ctap.get_info()
+    pin_set = info.options.get('clientPin')  # True=set, False=not set, None=not supported
+
+    if pin_set is False:
+        print("No PIN is set on your YubiKey.", file=sys.stderr)
+        print("A PIN is required to create resident credentials.", file=sys.stderr)
+        print("Set a PIN now (4–63 characters):", file=sys.stderr)
+        pin  = getpass.getpass("New PIN: ", stream=sys.stderr)
+        pin2 = getpass.getpass("Confirm PIN: ", stream=sys.stderr)
+        if pin != pin2:
+            sys.exit("PINs do not match.")
+        from fido2.ctap2.pin import ClientPin
+        protocol = _best_pin_protocol(ctap)
+        ClientPin(ctap, protocol).set_pin(pin)
+        print("PIN set.", file=sys.stderr)
+        return pin
+
+    if pin_set is True:
+        return getpass.getpass("YubiKey PIN: ", stream=sys.stderr)
+
+    # pin_set is None — authenticator doesn't support clientPin
+    return ""
+
+
+def _get_pin_uv_param(ctap, protocol, pin: str, client_data_hash: bytes):
+    """Return (pin_uv_param, pin_uv_protocol) for make_credential / get_assertion."""
+    if not pin:
+        return None, None
+    from fido2.ctap2.pin import ClientPin
+    cp = ClientPin(ctap, protocol)
+    try:
+        # PinProtocolV2 supports permissions; V1 does not
+        token = cp.get_pin_token(pin, ClientPin.PERMISSION.MAKE_CREDENTIAL, RP_ID)
+    except TypeError:
+        token = cp.get_pin_token(pin)
+    return protocol.authenticate(token, client_data_hash), protocol.VERSION
+
+
 def _derive_hmac_once() -> bytes:
     """
     Perform FIDO2 HMAC-secret assertion against the resident credential.
     Requires one physical touch. Returns 32 deterministic bytes.
+    Handles PUAT_REQUIRED by prompting for PIN automatically.
     """
     from fido2.ctap2 import Ctap2
     from fido2.ctap2.pin import ClientPin
+    from fido2.ctap.base import CtapError
 
     if not CRED_FILE.exists():
         sys.exit(f"No credential — run: python3 {sys.argv[0]} setup")
@@ -130,21 +176,41 @@ def _derive_hmac_once() -> bytes:
     salt_enc  = protocol.encrypt(shared, HMAC_SALT)
     salt_auth = protocol.authenticate(shared, salt_enc)
 
-    print("Touch your YubiKey...", file=sys.stderr)
-    result = ctap.get_assertion(
-        rp_id            = rp_id,
-        client_data_hash = CLIENT_HASH,
-        allow_list       = [{"type": "public-key", "id": cred_id}],
-        extensions       = {
-            "hmac-secret": {
-                1: ka,              # keyAgreement   (our ECDH public key)
-                2: salt_enc,        # saltEnc         (salt encrypted with shared key)
-                3: salt_auth,       # saltAuth        (MAC over saltEnc)
-                4: protocol.VERSION # pinUvAuthProtocol
-            }
-        },
-        options={"up": True},
-    )
+    def _do_assertion(pin_uv_param=None, pin_uv_protocol=None):
+        print("Touch your YubiKey...", file=sys.stderr)
+        return ctap.get_assertion(
+            rp_id            = rp_id,
+            client_data_hash = CLIENT_HASH,
+            allow_list       = [{"type": "public-key", "id": cred_id}],
+            extensions       = {
+                "hmac-secret": {
+                    1: ka,
+                    2: salt_enc,
+                    3: salt_auth,
+                    4: protocol.VERSION,
+                }
+            },
+            options         = {"up": True},
+            pin_uv_param    = pin_uv_param,
+            pin_uv_protocol = pin_uv_protocol,
+        )
+
+    try:
+        result = _do_assertion()
+    except CtapError as e:
+        if e.code.value != 0x36:  # not PUAT_REQUIRED
+            raise
+        # PIN required for assertion — prompt and retry
+        import getpass
+        pin = getpass.getpass("YubiKey PIN: ", stream=sys.stderr)
+        import fido2.ctap2.pin as _pin_mod
+        try:
+            token = ClientPin(ctap, protocol).get_pin_token(
+                pin, _pin_mod.ClientPin.PERMISSION.GET_ASSERTION, rp_id)
+        except TypeError:
+            token = ClientPin(ctap, protocol).get_pin_token(pin)
+        uv_param = protocol.authenticate(token, CLIENT_HASH)
+        result = _do_assertion(pin_uv_param=uv_param, pin_uv_protocol=protocol.VERSION)
 
     enc_out = (result.auth_data.extensions or {}).get("hmac-secret")
     if not enc_out:
@@ -292,6 +358,10 @@ def cmd_setup():
     if not info.extensions or "hmac-secret" not in info.extensions:
         sys.exit("YubiKey does not support hmac-secret. Requires Security Key firmware 5.2+.")
 
+    protocol = _best_pin_protocol(ctap)
+    pin = _ensure_pin(ctap)
+    pin_uv_param, pin_uv_protocol = _get_pin_uv_param(ctap, protocol, pin, CLIENT_HASH)
+
     print("Step 1/2 — Touch YubiKey to burn resident credential...", file=sys.stderr)
     mc = ctap.make_credential(
         client_data_hash = CLIENT_HASH,
@@ -300,6 +370,8 @@ def cmd_setup():
         key_params = [{"type": "public-key", "alg": -7}],   # ES256
         extensions = {"hmac-secret": True},
         options    = {"rk": True},    # RESIDENT — stored on YubiKey
+        pin_uv_param    = pin_uv_param,
+        pin_uv_protocol = pin_uv_protocol,
     )
 
     cred_id = mc.auth_data.credential_data.credential_id
