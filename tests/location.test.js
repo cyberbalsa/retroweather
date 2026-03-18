@@ -38,4 +38,41 @@ let passed = 0;
     passed++;
 }
 
+// ── tryIpGeo guard logic ────────────────────────────────────────────────────
+// Mirrors the two guards added at the top of tryIpGeo() in location.js.
+// Returns 'has-coords', 'disabled', or null (proceed).
+function tryIpGeoGuard(latLon, kiosk_ipgeo) {
+    if (latLon !== null) return 'has-coords';
+    if (kiosk_ipgeo === '0') return 'disabled';
+    return null;
+}
+
+{
+    const r = tryIpGeoGuard('{"lat":1,"lon":2}', '1');
+    assert.strictEqual(r, 'has-coords');
+    console.log('✓ tryIpGeoGuard: latLon present → skip (defensive)');
+    passed++;
+}
+
+{
+    const r = tryIpGeoGuard(null, '0');
+    assert.strictEqual(r, 'disabled');
+    console.log('✓ tryIpGeoGuard: kiosk_ipgeo=0 → disabled');
+    passed++;
+}
+
+{
+    const r = tryIpGeoGuard(null, '1');
+    assert.strictEqual(r, null);
+    console.log('✓ tryIpGeoGuard: enabled, no coords → proceed');
+    passed++;
+}
+
+{
+    const r = tryIpGeoGuard(null, null); // absent param defaults to enabled
+    assert.strictEqual(r, null);
+    console.log('✓ tryIpGeoGuard: missing param → defaults to enabled (proceed)');
+    passed++;
+}
+
 console.log(`\n${passed} tests passed`);
