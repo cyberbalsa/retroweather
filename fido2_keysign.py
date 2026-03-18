@@ -183,7 +183,7 @@ def _derive_hmac_once() -> bytes:
 
     # ── Step 1: get device's ECDH public key via authenticatorClientPIN ────────
     # subCommand 0x02 = getKeyAgreement; result key 0x01 = keyAgreement (COSE)
-    ka_resp  = ctap.client_pin(pin_uv_auth_protocol=prot_ver, sub_command=0x02)
+    ka_resp  = ctap.client_pin(pin_uv_protocol=prot_ver, sub_command=0x02)
     dev_cose = ka_resp[0x01]
 
     dev_pub = EllipticCurvePublicNumbers(
