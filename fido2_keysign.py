@@ -502,8 +502,28 @@ def _do_sign_aab(private_key, src: str, dst: str):
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+def _ensure_java():
+    """Ensure a JRE is available; install via system package manager if not."""
+    if shutil.which('java'):
+        return
+    print("java not found — attempting to install...", file=sys.stderr)
+    if shutil.which('apt-get'):
+        cmd = ['sudo', 'apt-get', 'install', '-y', 'default-jre-headless']
+    elif shutil.which('dnf5'):
+        cmd = ['sudo', 'dnf5', 'install', '-y', 'java-21-openjdk-headless']
+    elif shutil.which('dnf'):
+        cmd = ['sudo', 'dnf', 'install', '-y', 'java-21-openjdk-headless']
+    else:
+        sys.exit("ERROR: java not found and no supported package manager available. Install a JRE manually.")
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0 or not shutil.which('java'):
+        sys.exit("ERROR: Java install failed:\n" + r.stderr.decode(errors='replace'))
+    print("  java installed.", file=sys.stderr)
+
+
 def _install_android_sdk_build_tools():
     """Download Android cmdline-tools and use sdkmanager to install build-tools."""
+    _ensure_java()
     import urllib.request, zipfile as _zf
     sdk_root = Path.home() / 'android-sdk'
     cmdline  = sdk_root / 'cmdline-tools' / 'latest'
