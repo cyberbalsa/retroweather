@@ -169,10 +169,17 @@ def _hmac_to_rsa_key(hmac_bytes: bytes):
     return priv.private_key(default_backend())
 
 
-def _make_cert(private_key):
-    """Self-signed X.509 cert for private_key. Valid 10 years."""
+def _make_cert(private_key, deterministic=False):
+    """Self-signed X.509 cert for private_key. Valid 10 years.
+
+    deterministic=True: serial and dates are derived from the public key so
+    the same private key always produces the same cert fingerprint.  Use this
+    for AAB signing so Google Play sees a consistent certificate SHA1 across
+    releases.  deterministic=False (default): random serial + current time,
+    used only when creating the initial stored EC cert during setup.
+    """
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.x509.oid import NameOID
     import datetime
 
@@ -181,15 +188,29 @@ def _make_cert(private_key):
         x509.NameAttribute(NameOID.ORGANIZATION_NAME,  "cyberbalsa"),
         x509.NameAttribute(NameOID.COUNTRY_NAME,       "US"),
     ])
-    now = datetime.datetime.utcnow()
+
+    if deterministic:
+        # Derive serial from public key bytes so same key → same cert → same fingerprint
+        pub_bytes = private_key.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        serial = int.from_bytes(hashlib.sha256(pub_bytes).digest()[:16], 'big')
+        not_before = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)
+        not_after  = datetime.datetime(2034, 1, 1, tzinfo=datetime.timezone.utc)
+    else:
+        serial     = x509.random_serial_number()
+        now        = datetime.datetime.now(datetime.timezone.utc)
+        not_before = now
+        not_after  = now + datetime.timedelta(days=3650)
+
     return (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
         .public_key(private_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + datetime.timedelta(days=3650))
+        .serial_number(serial)
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .sign(private_key, hashes.SHA256())
     )
@@ -490,7 +511,7 @@ def _do_sign_aab(private_key, src: str, dst: str):
     # RSA key required: jarsigner produces META-INF/*.RSA which Google Play accepts.
     # An EC key would produce *.EC which Google Play rejects as "invalid signature".
     shutil.copy2(src, dst)
-    cert = _make_cert(private_key)   # in-memory cert matching the key type
+    cert = _make_cert(private_key, deterministic=True)  # same key → same cert → same fingerprint
     with _TempKeystore(private_key, cert=cert) as (ks_path, ks_pass):
         subprocess.run([
             'jarsigner',
