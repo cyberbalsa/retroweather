@@ -492,42 +492,27 @@ def _do_sign_aab(private_key, src: str, dst: str):
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 def _ensure_apksigner():
-    """Install apksigner if not already present. Tries apt-get, then Maven JAR."""
+    """Install apksigner if not already present via apt-get."""
     if _find_apksigner():
         return   # already installed
 
-    print("apksigner not found — attempting to install...", file=sys.stderr)
+    print("apksigner not found — attempting to install via apt-get...", file=sys.stderr)
 
-    # Try system package manager (Debian / Ubuntu)
-    if shutil.which('apt-get'):
-        r = subprocess.run(
-            ['sudo', 'apt-get', 'install', '-y', 'apksigner'],
-            capture_output=True,
-        )
-        if r.returncode == 0 and _find_apksigner():
-            print("  apksigner installed via apt-get.", file=sys.stderr)
-            return
+    if not shutil.which('apt-get'):
+        sys.exit("ERROR: apt-get not available; install apksigner manually.")
 
-    # Fall back: download standalone JAR from Maven and create a wrapper
-    import urllib.request
-    jar_dir  = Path.home() / '.local' / 'lib'
-    jar_dir.mkdir(parents=True, exist_ok=True)
-    jar_path = jar_dir / 'apksigner.jar'
-    bin_path = Path.home() / '.local' / 'bin' / 'apksigner'
-    bin_path.parent.mkdir(parents=True, exist_ok=True)
-
-    maven   = "https://dl.google.com/android/maven2/com/android/tools/build/apksigner"
-    version = "35.0.0"
-    url     = f"{maven}/{version}/apksigner-{version}.jar"
-    print(f"  Downloading {url} ...", file=sys.stderr)
-    urllib.request.urlretrieve(url, jar_path)
-
-    bin_path.write_text(
-        f"#!/bin/sh\nexec java -jar {jar_path} \"$@\"\n"
+    r = subprocess.run(
+        ['sudo', 'apt-get', 'install', '-y', 'apksigner'],
+        capture_output=True,
     )
-    bin_path.chmod(0o755)
-    print(f"  apksigner wrapper written to {bin_path}", file=sys.stderr)
-    print(f"  Ensure {bin_path.parent} is on your PATH.", file=sys.stderr)
+    if r.returncode != 0:
+        sys.exit(
+            f"ERROR: apt-get install apksigner failed:\n"
+            + r.stderr.decode(errors='replace')
+        )
+    if not _find_apksigner():
+        sys.exit("ERROR: apksigner still not found after apt-get install.")
+    print("  apksigner installed.", file=sys.stderr)
 
 
 def cmd_setup():
