@@ -30,12 +30,12 @@ data class CrtPreset(
             "clean_std" to CrtPreset(
                 id = "clean_std", displayLabel = "Clean · Standard",
                 scanlineStr = 0.50f, scanlineFreq = 480f, bloomStr = 0.15f,
-                noiseStr = 0.05f, vignetteStr = 0.30f, maskType = 2, maskStr = 0.25f
+                noiseStr = 0.00f, vignetteStr = 0.30f, maskType = 2, maskStr = 0.25f
             ),
             "clean_heavy" to CrtPreset(
                 id = "clean_heavy", displayLabel = "Clean · Heavy",
                 scanlineStr = 0.70f, scanlineFreq = 400f, bloomStr = 0.10f,
-                noiseStr = 0.05f, vignetteStr = 0.40f, maskType = 2, maskStr = 0.35f
+                noiseStr = 0.00f, vignetteStr = 0.40f, maskType = 2, maskStr = 0.35f
             ),
 
             // ── Composite ──────────────────────────────────────────────────

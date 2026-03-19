@@ -56,4 +56,11 @@ class CrtPresetTest {
             assertTrue("${p.id} maskType", p.maskType in 0..3)
         }
     }
+
+    @Test fun `clean presets have zero noise`() {
+        listOf("clean_subtle", "clean_std", "clean_heavy").forEach { id ->
+            val p = CrtPreset.catalog[id]!!
+            assertEquals("$id noiseStr should be 0", 0f, p.noiseStr, 0.001f)
+        }
+    }
 }
