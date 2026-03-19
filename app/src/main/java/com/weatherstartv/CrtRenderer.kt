@@ -29,6 +29,9 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var uMaskType = -1
     private var uMaskStr = -1
 
+    // Attribute locations (cached after link)
+    private var aPosition = -1
+
     fun setPreset(p: CrtPreset) {
         preset = p
         presetDirty = true
@@ -55,6 +58,9 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
         uVignetteStr = GLES20.glGetUniformLocation(program, "u_vignette_str")
         uMaskType    = GLES20.glGetUniformLocation(program, "u_mask_type")
         uMaskStr     = GLES20.glGetUniformLocation(program, "u_mask_str")
+
+        // Cache attribute locations
+        aPosition    = GLES20.glGetAttribLocation(program, "a_position")
 
         // Fullscreen quad: two triangles covering NDC (-1..1)
         val verts = floatArrayOf(-1f, -1f,  1f, -1f,  -1f,  1f,  1f,  1f)
@@ -88,6 +94,7 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES20.glUniform1f(uTime, t)
 
         if (presetDirty) {
+            presetDirty = false  // clear FIRST so a concurrent setPreset() re-sets it
             GLES20.glUniform1f(uScanlineStr,  p.scanlineStr)
             GLES20.glUniform1f(uScanlineFreq, p.scanlineFreq)
             GLES20.glUniform1f(uBloomStr,     p.bloomStr)
@@ -95,16 +102,14 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES20.glUniform1f(uVignetteStr,  p.vignetteStr)
             GLES20.glUniform1i(uMaskType,     p.maskType)
             GLES20.glUniform1f(uMaskStr,      p.maskStr)
-            presetDirty = false
         }
 
         // Draw fullscreen quad
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, quadVbo)
-        val posLoc = GLES20.glGetAttribLocation(program, "a_position")
-        GLES20.glEnableVertexAttribArray(posLoc)
-        GLES20.glVertexAttribPointer(posLoc, 2, GLES20.GL_FLOAT, false, 0, 0)
+        GLES20.glEnableVertexAttribArray(aPosition)
+        GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 0, 0)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-        GLES20.glDisableVertexAttribArray(posLoc)
+        GLES20.glDisableVertexAttribArray(aPosition)
     }
 
     private fun loadShaderSource(): String =
