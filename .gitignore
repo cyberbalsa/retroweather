@@ -4,7 +4,6 @@ build/
 app/build/
 *.iml
 local.properties
-app/src/main/assets/ws4kp/
 .superpowers/
 node_modules/
 releases-signed/
