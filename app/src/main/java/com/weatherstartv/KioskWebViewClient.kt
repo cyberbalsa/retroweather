@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
+import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLConnection
@@ -83,6 +84,16 @@ class KioskWebViewClient(private val context: Context) : WebViewClient() {
         // Serve our bundled assets via WebViewAssetLoader
         val assetResponse = assetLoader.shouldInterceptRequest(url)
         if (assetResponse != null) return assetResponse
+
+        // If the asset loader claimed the domain but found no matching file, return a proper
+        // 404 rather than null — null lets the request escape to the real network, where
+        // appassets.androidplatform.net has no server and returns ERR_INVALID_RESPONSE.
+        if (url.host == "appassets.androidplatform.net") {
+            return WebResourceResponse(
+                "text/plain", "utf-8", 404, "Not Found",
+                emptyMap(), ByteArrayInputStream(ByteArray(0))
+            )
+        }
 
         // Proxy external CORS-restricted requests through native code.
         // NOTE: archive.org MP3/audio files are NOT proxied — <audio src> doesn't enforce
