@@ -31,7 +31,7 @@ class CrtOverlayView @JvmOverloads constructor(
 
     fun setPreset(p: CrtPreset) {
         preset = p
-        if (p.noiseStr > 0f || p.id != "none") invalidate()
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -45,10 +45,9 @@ class CrtOverlayView @JvmOverloads constructor(
         // ── Scanlines ────────────────────────────────────────────────────────
         if (p.scanlineStr > 0f) {
             paint.color = Color.argb(
-                (p.scanlineStr * 160f).toInt().coerceIn(0, 255),
+                (p.scanlineStr * 220f).toInt().coerceIn(0, 255),
                 0, 0, 0
             )
-            // scanlineFreq = lines per screen height; draw every other line dark
             val lineSpacing = h / p.scanlineFreq
             var y = 0f
             while (y < h) {
@@ -59,12 +58,12 @@ class CrtOverlayView @JvmOverloads constructor(
 
         // ── Shadow mask (aperture grille columns) ─────────────────────────────
         if (p.maskStr > 0f && p.maskType != 0) {
-            val maskAlpha = (p.maskStr * 80f).toInt().coerceIn(0, 255)
+            val maskAlpha = (p.maskStr * 120f).toInt().coerceIn(0, 255)
             paint.color = Color.argb(maskAlpha, 0, 0, 0)
             val colW = when (p.maskType) {
-                1 -> w / 720f * 1f   // aperture grille: 1px dark per 3
-                2 -> w / 480f * 1f   // shadow mask: checkerboard-ish
-                3 -> w / 360f * 1f   // slot mask
+                1 -> w / 720f * 1f
+                2 -> w / 480f * 1f
+                3 -> w / 360f * 1f
                 else -> 0f
             }
             val period = when (p.maskType) {
@@ -84,12 +83,12 @@ class CrtOverlayView @JvmOverloads constructor(
 
         // ── Vignette (corner darkening) ───────────────────────────────────────
         if (p.vignetteStr > 0f) {
-            val radius = maxOf(w, h) * 0.75f
+            val radius = maxOf(w, h) * 0.65f
             val gradient = RadialGradient(
                 w / 2f, h / 2f, radius,
                 intArrayOf(
                     Color.TRANSPARENT,
-                    Color.argb((p.vignetteStr * 200f).toInt().coerceIn(0, 255), 0, 0, 0)
+                    Color.argb((p.vignetteStr * 230f).toInt().coerceIn(0, 255), 0, 0, 0)
                 ),
                 floatArrayOf(0f, 1f),
                 Shader.TileMode.CLAMP
@@ -102,8 +101,8 @@ class CrtOverlayView @JvmOverloads constructor(
         // ── Noise grain ───────────────────────────────────────────────────────
         if (p.noiseStr > 0f) {
             rng.setSeed(System.currentTimeMillis() / 50L)
-            val count = (p.noiseStr * 800f).toInt()
-            val bright = (p.noiseStr * 120f).toInt().coerceIn(0, 255)
+            val count = (p.noiseStr * 2000f).toInt()
+            val bright = (p.noiseStr * 180f).toInt().coerceIn(0, 255)
             repeat(count) {
                 val alpha = (rng.nextFloat() * bright).toInt()
                 val luma = if (rng.nextBoolean()) 255 else 0
@@ -115,16 +114,14 @@ class CrtOverlayView @JvmOverloads constructor(
         // ── Warm amber bloom tint ─────────────────────────────────────────────
         if (p.bloomStr > 0f) {
             paint.color = Color.argb(
-                (p.bloomStr * 35f).toInt().coerceIn(0, 255),
+                (p.bloomStr * 65f).toInt().coerceIn(0, 255),
                 255, 160, 30
             )
             canvas.drawRect(0f, 0f, w, h, paint)
         }
 
-        // Animate noise by requesting next frame
-        if (p.noiseStr > 0f) {
-            postInvalidateOnAnimation()
-        }
+        // Always re-draw so effects persist when WebView repaints beneath us
+        postInvalidateOnAnimation()
     }
 
     // GLSurfaceView lifecycle stubs — called by MainActivity but no-ops here
