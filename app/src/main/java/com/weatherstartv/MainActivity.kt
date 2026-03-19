@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
 
         configureWebView()
 
-        locationBridge = LocationBridge(this, webView)
+        locationBridge = LocationBridge(this, webView, crtOverlayView)
         webView.addJavascriptInterface(locationBridge, "Android")
         webView.webViewClient = KioskWebViewClient(this)
 
