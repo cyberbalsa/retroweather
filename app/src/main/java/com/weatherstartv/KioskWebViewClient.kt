@@ -27,6 +27,12 @@ class KioskWebViewClient(private val context: Context) : WebViewClient() {
         serveAsset("ws4kp/scripts/$path")
     }
 
+    // ws4kp JS sets img.src to absolute paths like /images/maps/radar/map-0-0.webp,
+    // which resolve to appassets.androidplatform.net/images/... — map them to assets.
+    private val ws4kpImagesHandler = WebViewAssetLoader.PathHandler { path ->
+        serveAsset("ws4kp/images/$path")
+    }
+
     // Serves file:///android_asset/ content via https://appassets.androidplatform.net/assets/
     // so ws4kp's fetch() calls work (modern WebView blocks fetch on file:// origins)
     private val assetLoader = WebViewAssetLoader.Builder()
@@ -34,6 +40,7 @@ class KioskWebViewClient(private val context: Context) : WebViewClient() {
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .addPathHandler("/data/", ws4kpDataHandler)
         .addPathHandler("/scripts/", ws4kpScriptsHandler)
+        .addPathHandler("/images/", ws4kpImagesHandler)
         .build()
 
     private fun serveAsset(assetPath: String): WebResourceResponse? {
@@ -111,14 +118,22 @@ class KioskWebViewClient(private val context: Context) : WebViewClient() {
 
     override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
+
+        // Read current CRT preset label from SharedPreferences.
+        // Injected OUTSIDE the __kioskOK guard so it is always set,
+        // even on early fires where the DOM isn't ready yet.
+        val prefs = context.getSharedPreferences(LocationBridge.PREFS, Context.MODE_PRIVATE)
+        val presetId = prefs.getString("crt_preset", "none") ?: "none"
+        val preset = CrtPreset.catalog[presetId] ?: CrtPreset.NONE
+        val escapedLabel = org.json.JSONObject.quote(preset.displayLabel)
+        val initLabel = "window.__initialCrtLabel=$escapedLabel;"
+
         val combined = assetFiles.joinToString("\n;\n") { filename ->
             context.assets.open(filename).bufferedReader().readText()
         }
-        // Guard prevents double-injection if onPageFinished fires multiple times
-        // for the same JS context (e.g. hash changes, sub-resource callbacks).
-        // A real page reload creates a fresh JS context so __kioskOK will be unset.
         view.evaluateJavascript(
-            "(function(){if(window.__kioskOK)return;window.__kioskOK=true;\n$combined\n})()",
+            // __initialCrtLabel is set unconditionally before the guard
+            "$initLabel\n(function(){if(window.__kioskOK||!document.head||!document.body)return;window.__kioskOK=true;\n$combined\n})()",
             null
         )
     }
