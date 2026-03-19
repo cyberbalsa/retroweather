@@ -17,6 +17,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var locationBridge: LocationBridge
+    private lateinit var crtOverlayView: CrtOverlayView
     private lateinit var insetsController: WindowInsetsControllerCompat
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -36,6 +37,14 @@ class MainActivity : AppCompatActivity() {
         hideSystemBars()
 
         webView = findViewById(R.id.webview)
+
+        crtOverlayView = findViewById(R.id.crtOverlay)
+
+        // Load saved CRT preset from SharedPreferences
+        val prefs = getSharedPreferences(LocationBridge.PREFS, MODE_PRIVATE)
+        val savedPresetId = prefs.getString("crt_preset", "none") ?: "none"
+        crtOverlayView.setPreset(CrtPreset.catalog[savedPresetId] ?: CrtPreset.NONE)
+
         configureWebView()
 
         locationBridge = LocationBridge(this, webView)
@@ -43,8 +52,26 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = KioskWebViewClient(this)
 
         if (savedInstanceState == null) {
-            webView.loadUrl(buildInitialUrl())
+            val savedQuery = prefs.getString("saved_query", null)
+            val url = if (savedQuery != null) {
+                // Must use the HTTPS appassets origin — fetch() is blocked on file:// origins
+                "https://appassets.androidplatform.net/assets/ws4kp/index.html$savedQuery"
+            } else {
+                buildInitialUrl()
+            }
+            webView.loadUrl(url)
         }
+    }
+
+    @Deprecated("Deprecated in API 33")
+    override fun onBackPressed() {
+        // Intercept back before it reaches super (which would finish the Activity).
+        // If settings is open JS closes/saves it; otherwise the press is swallowed
+        // (kiosk apps don't exit on back).
+        webView.evaluateJavascript(
+            "if(window.kioskHandleBack)window.kioskHandleBack();",
+            null
+        )
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -73,6 +100,16 @@ class MainActivity : AppCompatActivity() {
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
         webView.restoreState(savedInstanceState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        crtOverlayView.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        crtOverlayView.onPause()
     }
 
     private fun hideSystemBars() {
@@ -121,7 +158,9 @@ class MainActivity : AppCompatActivity() {
             "kiosk_music=1",
             "kiosk_vol=0.7",
             "kiosk_shuffle=1",
-            "kiosk_loc_mode=auto"
+            "kiosk_loc_mode=auto",
+            "settings-customFeedEnable-checkbox=true",
+            "settings-customFeed-string=${Uri.encode("https://news.kagi.com/tech.xml")}"
         )
         // Pre-populate saved location so ws4kp loads immediately without IP geo lookup
         val prefs = getSharedPreferences(LocationBridge.PREFS, MODE_PRIVATE)
