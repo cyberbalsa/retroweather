@@ -25,9 +25,15 @@ class CrtOverlayView @JvmOverloads constructor(
         holder.setFormat(PixelFormat.RGBA_8888)
         setRenderer(crtRenderer)
         renderMode = RENDERMODE_CONTINUOUSLY
+        visibility = android.view.View.GONE  // hidden until a non-none preset is selected
     }
 
     fun setPreset(preset: CrtPreset) {
+        if (preset.id == "none") {
+            visibility = android.view.View.GONE
+        } else {
+            visibility = android.view.View.VISIBLE
+        }
         crtRenderer.setPreset(preset)
     }
 }
