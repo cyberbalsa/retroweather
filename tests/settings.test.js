@@ -135,4 +135,39 @@ let passed = 0;
     passed++;
 }
 
+// saveSettings strips latLon from query string
+function stripLatLon(queryString) {
+    var stripped = queryString.replace(/[?&]latLon=[^&]*/g, '');
+    if (stripped.length > 0 && stripped.charAt(0) === '&') {
+        stripped = '?' + stripped.substring(1);
+    }
+    return stripped;
+}
+
+{
+    var q = '?kiosk_music=1&latLon=%7B%22lat%22%3A1%7D&kiosk_vol=0.7';
+    var result = stripLatLon(q);
+    assert.ok(result.indexOf('latLon') === -1, 'latLon should be stripped');
+    assert.ok(result.indexOf('kiosk_music') !== -1, 'kiosk_music should remain');
+    console.log('\u2713 stripLatLon removes latLon param');
+    passed++;
+}
+
+{
+    var q2 = '?latLon=%7B%22lat%22%3A1%7D&kiosk_vol=0.7';
+    var result2 = stripLatLon(q2);
+    assert.ok(result2.indexOf('latLon') === -1, 'latLon at start should be stripped');
+    assert.strictEqual(result2.charAt(0), '?', 'should still start with ?');
+    console.log('\u2713 stripLatLon handles latLon at start of query');
+    passed++;
+}
+
+{
+    var q3 = '?kiosk_music=1';
+    var result3 = stripLatLon(q3);
+    assert.strictEqual(result3, '?kiosk_music=1', 'no latLon: unchanged');
+    console.log('\u2713 stripLatLon leaves query unchanged when no latLon');
+    passed++;
+}
+
 console.log(`\n${passed} tests passed`);

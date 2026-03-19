@@ -14,7 +14,7 @@
         + '#kiosk-backdrop.open{display:-webkit-box!important;display:-webkit-flex!important;display:flex!important;}'
         + '#kiosk-modal{'
         + 'background:#0d1b2a;border:1px solid #1e3a5f;border-radius:12px;'
-        + 'padding:24px;width:90vw;max-width:480px;max-height:80vh;'
+        + 'padding:24px;width:90vw;max-width:520px;max-height:80vh;'
         + 'overflow-y:auto;color:#e0e8f0;font-family:sans-serif;'
         + '-webkit-box-sizing:border-box;box-sizing:border-box;'
         + '}'
@@ -41,11 +41,17 @@
         + '.k-btn-sm{font-size:0.8em;padding:4px 10px;background:#1e3a5f;'
         + 'border:1px solid #3a6a9f;border-radius:4px;color:#e0e8f0;cursor:pointer;}'
         + '.k-link{color:#7cb9e8;}'
-        + '#k-fixed-loc-display{font-size:0.8em;color:#9ab;-webkit-box-flex:1;-webkit-flex:1;flex:1;}';
+        + '.k-displays{display:-webkit-box;display:-webkit-flex;display:flex;'
+        + '-webkit-flex-wrap:wrap;flex-wrap:wrap;margin-top:4px;}'
+        + '.k-disp-item{-webkit-box-flex:0;-webkit-flex:0 0 50%;flex:0 0 50%;'
+        + 'font-size:0.85em;padding:3px 0;cursor:pointer;}'
+        ;
 
     var HTML = '<div id="kiosk-backdrop">'
-        + '<div id="kiosk-modal" role="dialog">'
+        + '<div id="kiosk-modal" role="dialog" tabindex="-1">'
         + '<h2>&#9881; WeatherStar Settings</h2>'
+
+        // ── Location ─────────────────────────────────────────────────────────
         + '<div class="k-section"><h3>Location</h3>'
         + '<div class="k-row k-radio">'
         + '<label><input type="radio" name="k-loc" value="auto" tabindex="0"> Auto-detect</label>'
@@ -55,18 +61,34 @@
         + '<label for="k-latlon">Lat,Lon:</label>'
         + '<input type="text" id="k-latlon" placeholder="40.7128,-74.0060" tabindex="0">'
         + '</div>'
-        + '<div class="k-row"><button id="k-redetect" class="k-btn-sm" tabindex="0">Re-detect location</button></div>'
+        + '<div class="k-row">'
+        + '<button id="k-redetect" class="k-btn-sm" tabindex="0">Re-detect location</button>'
+        + '<label style="margin-left:16px;font-size:0.9em;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-box-align:center;-webkit-align-items:center;align-items:center;">'
+        + '<input type="checkbox" id="k-ipgeo" tabindex="0" style="margin-right:6px;"> IP geo (ipinfo.io, ipapi.co)'
+        + '</label>'
         + '</div>'
-        + '<div class="k-section"><h3>Music</h3>'
-        + '<div class="k-row"><label for="k-music">Enabled</label><input type="checkbox" id="k-music" tabindex="0"></div>'
-        + '<div class="k-row k-radio">'
-        + '<label><input type="radio" name="k-play" value="sequential" tabindex="0"> Sequential</label>'
-        + '<label><input type="radio" name="k-play" value="shuffle" tabindex="0"> Shuffle</label>'
         + '</div>'
-        + '<div class="k-row"><label for="k-vol">Volume</label><input type="range" id="k-vol" min="0" max="100" tabindex="0"></div>'
-        + '<div id="kiosk-track"></div>'
+
+        // ── Displays ─────────────────────────────────────────────────────────
+        + '<div class="k-section"><h3>Displays</h3>'
+        + '<div class="k-displays">'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-current-weather" tabindex="0"> Current Weather</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-latest-observations" tabindex="0"> Latest Obs.</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-hourly" tabindex="0"> Hourly</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-hourly-graph" tabindex="0"> Hourly Graph</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-local-forecast" tabindex="0"> Local Forecast</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-extended-forecast" tabindex="0"> Extended Forecast</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-regional-forecast" tabindex="0"> Regional Forecast</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-travel" tabindex="0"> Travel</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-almanac" tabindex="0"> Almanac</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-hazards" tabindex="0"> Hazards</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-spc-outlook" tabindex="0"> SPC Outlook</label>'
+        + '<label class="k-disp-item"><input type="checkbox" id="k-disp-radar" tabindex="0"> Radar</label>'
         + '</div>'
-        + '<div class="k-section"><h3>Display</h3>'
+        + '</div>'
+
+        // ── Appearance ────────────────────────────────────────────────────────
+        + '<div class="k-section"><h3>Appearance</h3>'
         + '<div class="k-row"><label for="k-wide">Widescreen (16:9)</label><input type="checkbox" id="k-wide" tabindex="0"></div>'
         + '<div class="k-row"><label for="k-units">Units</label>'
         + '<select id="k-units" tabindex="0"><option value="us">US (F)</option><option value="si">Metric (C)</option></select>'
@@ -76,25 +98,50 @@
         + '<option value="0.5">Very Fast</option><option value="0.75">Fast</option>'
         + '<option value="1.0">Normal</option><option value="1.25">Slow</option><option value="1.5">Very Slow</option>'
         + '</select></div>'
+        + '<div class="k-row">'
+        + '<label for="k-crt-pick">CRT Shader</label>'
+        + '<span id="k-crt-label" style="font-size:0.82em;color:#7cb9e8;-webkit-flex:1;flex:1;margin-left:8px;">None</span>'
+        + '<button id="k-crt-pick" class="k-btn-sm" tabindex="0">Pick\u2026</button>'
         + '</div>'
+        + '</div>'
+
+        // ── Music ─────────────────────────────────────────────────────────────
+        + '<div class="k-section"><h3>Music</h3>'
+        + '<div class="k-row"><label for="k-music">Enabled</label><input type="checkbox" id="k-music" tabindex="0"></div>'
+        + '<div class="k-row k-radio">'
+        + '<label><input type="radio" name="k-play" value="sequential" tabindex="0"> Sequential</label>'
+        + '<label><input type="radio" name="k-play" value="shuffle" tabindex="0"> Shuffle</label>'
+        + '</div>'
+        + '<div class="k-row"><label>Volume</label>'
+        + '<button id="k-vol-dn" class="k-btn-sm" tabindex="0">&#8722;</button>'
+        + '<span id="k-vol-val" style="margin:0 8px;min-width:3em;text-align:center;">70%</span>'
+        + '<button id="k-vol-up" class="k-btn-sm" tabindex="0">+</button>'
+        + '<input type="range" id="k-vol" min="0" max="100" tabindex="-1" style="display:none">'
+        + '</div>'
+        + '<div id="kiosk-track"></div>'
+        + '</div>'
+
+        // ── Custom Feed ───────────────────────────────────────────────────────
+        + '<div class="k-section"><h3>Custom Feed</h3>'
+        + '<div class="k-row"><label for="k-feed-enable">Enabled</label><input type="checkbox" id="k-feed-enable" tabindex="0"></div>'
+        + '<div class="k-row"><label for="k-feed-url">URL</label>'
+        + '<input type="text" id="k-feed-url" placeholder="https://example.com/feed.xml" tabindex="0">'
+        + '</div>'
+        + '</div>'
+
+        // ── About ─────────────────────────────────────────────────────────────
         + '<div class="k-section"><h3>About</h3>'
-        + '<p style="font-size:0.8em;margin:0 0 6px;">'
-        + '<a href="https://github.com/cyberbalsa/retroweather" target="_blank" class="k-link">WeatherStar Kiosk</a>'
-        + ' &mdash; MIT License</p>'
-        + '<p style="font-size:0.8em;margin:0 0 12px;">'
+        + '<p style="font-size:0.8em;margin:0 0 8px;">'
+        + '<a href="https://github.com/cyberbalsa/retroweather" target="_blank" class="k-link">Retro Weather by Balsa</a>'
+        + '</p>'
+        + '<p style="font-size:0.8em;margin:0 0 8px;">'
         + 'Based on <a href="https://github.com/netbymatt/ws4kp" target="_blank" class="k-link">WeatherStar 4000+</a>'
         + ' by netbymatt</p>'
-        + '<p style="font-size:0.8em;color:#9ab;margin:0 0 8px;">'
-        + 'IP geolocation (GPS fallback): ipinfo.io, ipapi.co</p>'
-        + '<div class="k-row">'
-        + '<label for="k-ipgeo">Enable IP geolocation</label>'
-        + '<input type="checkbox" id="k-ipgeo" tabindex="0">'
+        + '<p style="font-size:0.8em;margin:0 0 0;">'
+        + 'CRT shaders inspired by <a href="https://github.com/RetroCrisis/Retro-Crisis-GDV-NTSC" target="_blank" class="k-link">Retro Crisis GDV-NTSC</a>'
+        + ' by RetroCrisis</p>'
         + '</div>'
-        + '<div id="k-fixed-loc-row" class="k-row" style="display:none">'
-        + '<span id="k-fixed-loc-display">Fixed: none</span>'
-        + '<button id="k-change-loc" class="k-btn-sm" tabindex="0">Change</button>'
-        + '</div>'
-        + '</div>'
+
         + '<button id="kiosk-apply" tabindex="0">Apply</button>'
         + '</div></div>';
 
@@ -153,31 +200,84 @@
         return null;
     }
 
+    // Display checkboxes default to enabled when absent from URL
+    function readDisplayParam(name) {
+        var v = getParam(name + '-checkbox');
+        if (v === null) return true;
+        return v !== 'false';
+    }
+
     // ── Param read/write ─────────────────────────────────────────────────────
 
     function readParams() {
         return {
-            music:   getParam('kiosk_music') !== '0',
-            volume:  parseFloat(getParam('kiosk_vol') || '0.7'),
-            shuffle: getParam('kiosk_shuffle') !== '0',
-            locMode: getParam('kiosk_loc_mode') || 'auto',
-            latLon:  getParam('latLon') || '',
-            wide:    getParam('settings-wide-checkbox') === 'true',
-            units:   getParam('settings-units-select') || 'us',
-            speed:   getParam('settings-speed-select') || '1.0',
-            ipGeo:   getParam('kiosk_ipgeo') !== '0'   // absent = enabled (default)
+            // kiosk music
+            music:      getParam('kiosk_music') !== '0',
+            volume:     parseFloat(getParam('kiosk_vol') || '0.7'),
+            shuffle:    getParam('kiosk_shuffle') !== '0',
+            // location
+            locMode:    getParam('kiosk_loc_mode') || 'auto',
+            latLon:     getParam('latLon') || '',
+            ipGeo:      getParam('kiosk_ipgeo') !== '0',
+            // displays (all default enabled)
+            curWeather: readDisplayParam('current-weather'),
+            latestObs:  readDisplayParam('latest-observations'),
+            hourly:     readDisplayParam('hourly'),
+            hourlyGraph: readDisplayParam('hourly-graph'),
+            local:      readDisplayParam('local-forecast'),
+            extended:   readDisplayParam('extended-forecast'),
+            regional:   readDisplayParam('regional-forecast'),
+            travel:     readDisplayParam('travel'),
+            almanac:    readDisplayParam('almanac'),
+            hazards:    readDisplayParam('hazards'),
+            spcOutlook: readDisplayParam('spc-outlook'),
+            radar:      readDisplayParam('radar'),
+            // appearance
+            wide:        getParam('settings-wide-checkbox') === 'true',
+            units:       getParam('settings-units-select') || 'us',
+            speed:       getParam('settings-speed-select') || '1.0',
+            // custom feed (absent = enabled with default Kagi tech feed)
+            feedEnable: getParam('settings-customFeedEnable-checkbox') !== 'false',
+            feedUrl:    getParam('settings-customFeed-string') || 'https://news.kagi.com/tech.xml'
         };
     }
 
     function applySettings(values) {
-        setParam('kiosk_music',            values.music   ? '1' : '0');
-        setParam('kiosk_vol',              String(values.volume));
-        setParam('kiosk_shuffle',          values.shuffle ? '1' : '0');
-        setParam('kiosk_loc_mode',         values.locMode);
-        setParam('settings-wide-checkbox', values.wide    ? 'true' : 'false');
-        setParam('settings-units-select',  values.units);
-        setParam('settings-speed-select',  values.speed);
-        setParam('kiosk_ipgeo',            values.ipGeo   ? '1' : '0');
+        // kiosk music
+        setParam('kiosk_music',   values.music   ? '1' : '0');
+        setParam('kiosk_vol',     String(values.volume));
+        setParam('kiosk_shuffle', values.shuffle ? '1' : '0');
+        // location
+        setParam('kiosk_loc_mode', values.locMode);
+        setParam('kiosk_ipgeo',    values.ipGeo ? '1' : '0');
+        // displays
+        setParam('current-weather-checkbox',    values.curWeather  ? 'true' : 'false');
+        setParam('latest-observations-checkbox', values.latestObs  ? 'true' : 'false');
+        setParam('hourly-checkbox',             values.hourly      ? 'true' : 'false');
+        setParam('hourly-graph-checkbox',       values.hourlyGraph ? 'true' : 'false');
+        setParam('local-forecast-checkbox',     values.local       ? 'true' : 'false');
+        setParam('extended-forecast-checkbox',  values.extended    ? 'true' : 'false');
+        setParam('regional-forecast-checkbox',  values.regional    ? 'true' : 'false');
+        setParam('travel-checkbox',             values.travel      ? 'true' : 'false');
+        setParam('almanac-checkbox',            values.almanac     ? 'true' : 'false');
+        setParam('hazards-checkbox',            values.hazards     ? 'true' : 'false');
+        setParam('spc-outlook-checkbox',        values.spcOutlook  ? 'true' : 'false');
+        setParam('radar-checkbox',              values.radar       ? 'true' : 'false');
+        // appearance
+        setParam('settings-wide-checkbox',       values.wide        ? 'true' : 'false');
+        setParam('settings-units-select',        values.units);
+        setParam('settings-speed-select',        values.speed);
+        // custom feed
+        setParam('settings-customFeedEnable-checkbox', values.feedEnable ? 'true' : 'false');
+        if (values.feedUrl) {
+            setParam('settings-customFeed-string', values.feedUrl);
+        } else {
+            removeParam('settings-customFeed-string');
+        }
+
+        if (window.Android && window.Android.saveSettings) {
+            window.Android.saveSettings(window.location.search);
+        }
 
         if (values.locMode === 'manual' && values.latLon && window.applyManualLocation) {
             window.applyManualLocation(values.latLon);
@@ -191,7 +291,13 @@
                 window.Android.clearSavedLocation();
             }
         }
-        window.location.reload();
+        // Use native bridge reload — window.location.reload() is unreliable when
+        // called from within an evaluateJavascript execution context on Android WebView.
+        if (window.Android && window.Android.requestReload) {
+            window.Android.requestReload();
+        } else {
+            window.location.reload();
+        }
     }
 
     // ── Init ─────────────────────────────────────────────────────────────────
@@ -205,20 +311,35 @@
         // insertAdjacentHTML inserts compile-time constant markup, not user input
         document.body.insertAdjacentHTML('beforeend', HTML);
 
-        var backdrop    = document.getElementById('kiosk-backdrop');
-        var manualRow   = document.getElementById('k-manual-row');
-        var latLonInput = document.getElementById('k-latlon');
-        var musicCheck  = document.getElementById('k-music');
-        var volSlider   = document.getElementById('k-vol');
-        var wideCheck   = document.getElementById('k-wide');
-        var unitsSelect = document.getElementById('k-units');
-        var speedSelect = document.getElementById('k-speed');
-        var applyBtn    = document.getElementById('kiosk-apply');
-        var redetectBtn = document.getElementById('k-redetect');
-        var trackLabel  = document.getElementById('kiosk-track');
+        var backdrop     = document.getElementById('kiosk-backdrop');
+        var manualRow    = document.getElementById('k-manual-row');
+        var latLonInput  = document.getElementById('k-latlon');
+        var musicCheck   = document.getElementById('k-music');
+        var volSlider    = document.getElementById('k-vol');
+        var volValLabel  = document.getElementById('k-vol-val');
+        var volDnBtn     = document.getElementById('k-vol-dn');
+        var volUpBtn     = document.getElementById('k-vol-up');
+        var wideCheck    = document.getElementById('k-wide');
+        var unitsSelect  = document.getElementById('k-units');
+        var speedSelect  = document.getElementById('k-speed');
+        var crtPickBtn   = document.getElementById('k-crt-pick');
+        var crtLabel     = document.getElementById('k-crt-label');
+
+        // Set initial label from native-injected value (set by KioskWebViewClient.onPageFinished)
+        if (window.__initialCrtLabel) {
+            crtLabel.textContent = window.__initialCrtLabel;
+        }
+
+        var feedEnableChk  = document.getElementById('k-feed-enable');
+        var feedUrlInput   = document.getElementById('k-feed-url');
+        var applyBtn     = document.getElementById('kiosk-apply');
+        var redetectBtn  = document.getElementById('k-redetect');
+        var trackLabel   = document.getElementById('kiosk-track');
 
         function populateForm() {
             var p = readParams();
+
+            // location
             var locRadios = document.querySelectorAll('input[name="k-loc"]');
             for (var i = 0; i < locRadios.length; i++) {
                 locRadios[i].checked = locRadios[i].value === p.locMode;
@@ -230,34 +351,40 @@
                     latLonInput.value = coord.lat + ',' + coord.lon;
                 } catch (e) {}
             }
+            document.getElementById('k-ipgeo').checked = p.ipGeo;
+
+            // displays
+            document.getElementById('k-disp-current-weather').checked    = p.curWeather;
+            document.getElementById('k-disp-latest-observations').checked = p.latestObs;
+            document.getElementById('k-disp-hourly').checked              = p.hourly;
+            document.getElementById('k-disp-hourly-graph').checked        = p.hourlyGraph;
+            document.getElementById('k-disp-local-forecast').checked      = p.local;
+            document.getElementById('k-disp-extended-forecast').checked   = p.extended;
+            document.getElementById('k-disp-regional-forecast').checked   = p.regional;
+            document.getElementById('k-disp-travel').checked              = p.travel;
+            document.getElementById('k-disp-almanac').checked             = p.almanac;
+            document.getElementById('k-disp-hazards').checked             = p.hazards;
+            document.getElementById('k-disp-spc-outlook').checked         = p.spcOutlook;
+            document.getElementById('k-disp-radar').checked               = p.radar;
+
+            // appearance
+            wideCheck.checked    = p.wide;
+            unitsSelect.value    = p.units;
+            speedSelect.value    = p.speed;
+
+            // music
             musicCheck.checked = p.music;
             volSlider.value    = Math.round(p.volume * 100);
+            volValLabel.textContent = volSlider.value + '%';
             var playRadios = document.querySelectorAll('input[name="k-play"]');
             for (var j = 0; j < playRadios.length; j++) {
                 playRadios[j].checked = playRadios[j].value === (p.shuffle ? 'shuffle' : 'sequential');
             }
-            wideCheck.checked  = p.wide;
-            unitsSelect.value  = p.units;
-            speedSelect.value  = p.speed;
             if (window.musicGetCurrentTitle) trackLabel.textContent = window.musicGetCurrentTitle();
 
-            var ipGeoCheck   = document.getElementById('k-ipgeo');
-            var fixedLocRow  = document.getElementById('k-fixed-loc-row');
-            var fixedLocDisp = document.getElementById('k-fixed-loc-display');
-            if (ipGeoCheck) {
-                ipGeoCheck.checked = p.ipGeo;
-                fixedLocRow.style.display = p.ipGeo ? 'none' : '-webkit-box';
-                if (!p.ipGeo && p.latLon) {
-                    try {
-                        var coord = JSON.parse(decodeURIComponent(p.latLon));
-                        if (coord && coord.lat !== undefined && coord.lon !== undefined) {
-                            fixedLocDisp.textContent = 'Fixed: '
-                                + parseFloat(coord.lat).toFixed(4) + ', '
-                                + parseFloat(coord.lon).toFixed(4);
-                        }
-                    } catch (e) { fixedLocDisp.textContent = 'Fixed: none'; }
-                }
-            }  // end if (ipGeoCheck)
+            // custom feed
+            feedEnableChk.checked = p.feedEnable;
+            feedUrlInput.value    = p.feedUrl;
         }
 
         var locRadiosAll = document.querySelectorAll('input[name="k-loc"]');
@@ -268,26 +395,48 @@
             });
         }
 
-        // KitKat fires 'change', modern browsers fire 'input' — handle both
-        function onVolChange() {
-            if (window.musicSetVolume) window.musicSetVolume(volSlider.value / 100);
+        crtPickBtn.addEventListener('click', function () {
+            if (window.Android && window.Android.showCrtPicker) {
+                window.Android.showCrtPicker();
+            }
+        });
+
+        function setVol(pct) {
+            pct = Math.max(0, Math.min(100, pct));
+            volSlider.value = pct;
+            volValLabel.textContent = pct + '%';
+            if (window.musicSetVolume) window.musicSetVolume(pct / 100);
         }
-        volSlider.addEventListener('input', onVolChange);
-        volSlider.addEventListener('change', onVolChange);
+        volDnBtn.addEventListener('click', function () { setVol(parseInt(volSlider.value, 10) - 10); });
+        volUpBtn.addEventListener('click', function () { setVol(parseInt(volSlider.value, 10) + 10); });
 
         applyBtn.addEventListener('click', function () {
             var lc = findCheckedRadio('k-loc');
             var pc = findCheckedRadio('k-play');
             applySettings({
-                music:   musicCheck.checked,
-                volume:  volSlider.value / 100,
-                shuffle: pc ? pc.value === 'shuffle' : true,
-                locMode: lc ? lc.value : 'auto',
-                latLon:  latLonInput.value.trim(),
-                wide:    wideCheck.checked,
-                units:   unitsSelect.value,
-                speed:   speedSelect.value,
-                ipGeo:   document.getElementById('k-ipgeo').checked
+                music:       musicCheck.checked,
+                volume:      volSlider.value / 100,
+                shuffle:     pc ? pc.value === 'shuffle' : true,
+                locMode:     lc ? lc.value : 'auto',
+                latLon:      latLonInput.value.trim(),
+                ipGeo:       document.getElementById('k-ipgeo').checked,
+                curWeather:  document.getElementById('k-disp-current-weather').checked,
+                latestObs:   document.getElementById('k-disp-latest-observations').checked,
+                hourly:      document.getElementById('k-disp-hourly').checked,
+                hourlyGraph: document.getElementById('k-disp-hourly-graph').checked,
+                local:       document.getElementById('k-disp-local-forecast').checked,
+                extended:    document.getElementById('k-disp-extended-forecast').checked,
+                regional:    document.getElementById('k-disp-regional-forecast').checked,
+                travel:      document.getElementById('k-disp-travel').checked,
+                almanac:     document.getElementById('k-disp-almanac').checked,
+                hazards:     document.getElementById('k-disp-hazards').checked,
+                spcOutlook:  document.getElementById('k-disp-spc-outlook').checked,
+                radar:       document.getElementById('k-disp-radar').checked,
+                wide:        wideCheck.checked,
+                units:       unitsSelect.value,
+                speed:       speedSelect.value,
+                feedEnable:  feedEnableChk.checked,
+                feedUrl:     feedUrlInput.value.trim()
             });
         });
 
@@ -295,35 +444,26 @@
             if (window.redetectLocation) window.redetectLocation();
         });
 
-        var ipGeoEl     = document.getElementById('k-ipgeo');
-        var fixedRowEl  = document.getElementById('k-fixed-loc-row');
-        var changeLocEl = document.getElementById('k-change-loc');
-
-        ipGeoEl.addEventListener('change', function () {
-            var disabled = !ipGeoEl.checked;
-            fixedRowEl.style.display = disabled ? '-webkit-box' : 'none';
-        });
-
-        changeLocEl.addEventListener('click', function () {
-            closeSettings();
-            if (window.openLocationModal) window.openLocationModal();
-        });
-        // end About section wiring
-
         backdrop.addEventListener('click', function (e) {
             if (!isInsideId(e.target, 'kiosk-modal')) closeSettings();
         });
 
         document.addEventListener('keydown', function (e) {
             var key = e.key || e.keyCode;
-            var isEsc = (key === 'Escape' || key === 27 || key === 'GoBack');
-            if (isEsc && backdrop.className.indexOf('open') !== -1) closeSettings();
+            // Escape on keyboard closes settings (back key is handled natively via kioskHandleBack)
+            if ((key === 'Escape' || key === 27) && backdrop.className.indexOf('open') !== -1) {
+                applyBtn.click();
+            }
         });
 
         function openSettings() {
             populateForm();
             backdrop.className += ' open';
-            applyBtn.focus();
+            // Focus the modal container (tabindex=-1) rather than a button, so the
+            // Enter key still in-flight from the long-press doesn't trigger anything,
+            // but D-pad spatial navigation has a starting point inside the modal.
+            var modal = document.getElementById('kiosk-modal');
+            if (modal) modal.focus();
         }
 
         function closeSettings() {
@@ -333,6 +473,14 @@
         window.openKioskSettings  = openSettings;
         window.closeKioskSettings = closeSettings;
         window._settingsUpdateTrack = function (t) { trackLabel.textContent = t; };
+        // Called by native onBackPressed — save+close if open, no-op otherwise
+        window.kioskHandleBack = function () {
+            if (backdrop.className.indexOf('open') !== -1) applyBtn.click();
+        };
+        window.updateCrtLabel = function (label) {
+            var el = document.getElementById('k-crt-label');
+            if (el) el.textContent = label || 'None';
+        };
     }
 
     window.initSettings = initSettings;
