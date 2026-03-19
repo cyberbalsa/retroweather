@@ -394,18 +394,14 @@ def create_tv_banner(output_path):
                     draw.rectangle([(px, py), (px + p - 1, py + p - 1)], fill=color)
         return x + (len(bitmap[0]) + 1) * p  # return next x position
 
-    # Draw "WeatherStar" - large cyan text
-    # scale=3: each char is (5+1)*3=18px wide; 11 chars * 18 = 198px; starts at 116 → ends at 314 (fits 320)
-    big_scale = 3
+    # Draw "WeatherStar" - use scale=2 so 11 chars * 12px = 132px, plenty of room in 320px banner
+    big_scale = 2
     cx = text_x
     for char in "WEATHERSTAR":
         cx = draw_pixel_char(draw, char, cx, text_y, big_scale, COLOR_ACCENT_CYAN)
 
-    # Bright highlight dots on top of letters (retro CRT phosphor look)
-    # Skip this, keep it clean
-
-    # Draw "KIOSK" - smaller yellow text below
-    small_scale = 3
+    # Draw "KIOSK" - yellow text below
+    small_scale = 2
     kiosk_text = "KIOSK"
     kiosk_x = text_x
     kiosk_y = text_y + 7 * big_scale + big_scale * 2  # below WeatherStar
@@ -421,6 +417,156 @@ def create_tv_banner(output_path):
 
     img.save(output_path, 'PNG')
     print(f"  Saved TV banner 320x180: {output_path}")
+
+
+def _draw_store_banner_base(draw, img, w, h, cloud_scale, cloud_cx, cloud_cy,
+                             title_text, title_scale, title_x, title_y,
+                             subtitle_text, subtitle_scale):
+    """Shared layout for feature graphic and TV store banner."""
+    # Background gradient
+    for y in range(h):
+        t = y / h
+        r = int(COLOR_BG_DARK[0] + (COLOR_BG_MID[0] - COLOR_BG_DARK[0]) * t)
+        g = int(COLOR_BG_DARK[1] + (COLOR_BG_MID[1] - COLOR_BG_DARK[1]) * t)
+        b = int(COLOR_BG_DARK[2] + (COLOR_BG_MID[2] - COLOR_BG_DARK[2]) * t)
+        draw.line([(0, y), (w, y)], fill=(r, g, b))
+
+    # Pixel grid
+    for x in range(0, w, 6):
+        draw.line([(x, 0), (x, h)], fill=(0, 0, 30, 10))
+    for y in range(0, h, 6):
+        draw.line([(0, y), (w, y)], fill=(0, 0, 30, 10))
+
+    # Scattered cyan pixel dots
+    import random
+    rng = random.Random(42)
+    dot_size = max(2, w // 200)
+    for _ in range(60):
+        dx, dy = rng.randint(0, w - dot_size), rng.randint(0, h - dot_size)
+        alpha = rng.randint(40, 120)
+        draw.rectangle([(dx, dy), (dx + dot_size, dy + dot_size)],
+                       fill=(COLOR_ACCENT_CYAN[0], COLOR_ACCENT_CYAN[1], COLOR_ACCENT_CYAN[2], alpha))
+
+    # Cloud + lightning
+    draw_cloud_pixel(draw, cloud_cx, cloud_cy, cloud_scale)
+    draw_lightning_bolt(draw, cloud_cx + cloud_scale * 2, cloud_cy + cloud_scale * 18, cloud_scale)
+
+    # Vertical cyan separator
+    sep_x = int(w * 0.28)
+    for y in range(h // 8, h - h // 8):
+        alpha = 180 if (y % 3 != 0) else 60
+        draw.point((sep_x, y),
+                   fill=(COLOR_ACCENT_CYAN[0], COLOR_ACCENT_CYAN[1], COLOR_ACCENT_CYAN[2], alpha))
+
+    # Title text
+    def draw_char(draw, char, x, y, scale, color):
+        FONT = {
+            'W': ["1...1","1...1","1.1.1","1.1.1","11111",".1.1.",".1.1."],
+            'E': ["11111","1....","1....","1111.","1....","1....","11111"],
+            'A': [".111.","1...1","1...1","11111","1...1","1...1","1...1"],
+            'T': ["11111","..1..","..1..","..1..","..1..","..1..","..1.."],
+            'H': ["1...1","1...1","1...1","11111","1...1","1...1","1...1"],
+            'R': ["1111.","1...1","1...1","1111.","11...","1.1..","1..1."],
+            'S': [".1111","1....","1....","0111.","....1","....1","1111."],
+            'O': [".111.","1...1","1...1","1...1","1...1","1...1",".111."],
+            'K': ["1...1","1..1.","1.1..","11...","1.1..","1..1.","1...1"],
+            'I': ["11111","..1..","..1..","..1..","..1..","..1..","11111"],
+            'N': ["1...1","11..1","1.1.1","1..11","1...1","1...1","1...1"],
+            'G': [".111.","1...1","1....","1.111","1...1","1...1",".111."],
+            'L': ["1....","1....","1....","1....","1....","1....","11111"],
+            'Y': ["1...1","1...1",".1.1.",".1.1.","..1..","..1..","..1.."],
+            'V': ["1...1","1...1","1...1","1...1",".1.1.",".1.1.","..1.."],
+            'D': ["111..","1..1.","1...1","1...1","1...1","1..1.","111.."],
+            'C': [".111.","1...1","1....","1....","1....","1...1",".111."],
+            ' ': [".....",".....",".....",".....",".....",".....","....."],
+        }
+        bitmap = FONT.get(char.upper(), FONT[' '])
+        p = scale
+        for row_i, row in enumerate(bitmap):
+            for col_i, pixel in enumerate(row):
+                if pixel == '1':
+                    px2 = x + col_i * p
+                    py2 = y + row_i * p
+                    draw.rectangle([(px2, py2), (px2 + p - 1, py2 + p - 1)], fill=color)
+        return x + (len(bitmap[0]) + 1) * p
+
+    cx = title_x
+    for char in title_text:
+        cx = draw_char(draw, char, cx, title_y, title_scale, COLOR_ACCENT_CYAN)
+
+    cx = title_x
+    sub_y = title_y + 7 * title_scale + title_scale * 3
+    for char in subtitle_text:
+        cx = draw_char(draw, char, cx, sub_y, subtitle_scale, COLOR_YELLOW)
+
+    # Bottom orange accent bar
+    bar_h = max(8, h // 25)
+    for y in range(h - bar_h, h):
+        t = (y - (h - bar_h)) / bar_h
+        r = int(COLOR_ORANGE[0] * (1 - t * 0.3))
+        g = int(COLOR_ORANGE[1] * (1 - t * 0.3))
+        b2 = int(COLOR_ORANGE[2] * (1 - t * 0.3))
+        draw.line([(0, y), (w, y)], fill=(r, g, b2))
+
+    # Top cyan accent line
+    draw.line([(0, 0), (w, 0)], fill=COLOR_ACCENT_CYAN)
+    draw.line([(0, 1), (w, 1)],
+              fill=(COLOR_ACCENT_CYAN[0], COLOR_ACCENT_CYAN[1], COLOR_ACCENT_CYAN[2], 100))
+
+    # Scanlines
+    scan = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    scan_draw = ImageDraw.Draw(scan)
+    for y in range(0, h, 4):
+        scan_draw.line([(0, y), (w, y)], fill=(0, 0, 0, 18))
+    return Image.alpha_composite(img, scan)
+
+
+def create_feature_graphic(output_path):
+    """Create the 1024x500 Google Play feature graphic."""
+    w, h = 1024, 500
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(img)
+
+    cloud_scale = 7.0
+    cloud_cx = int(w * 0.14)
+    cloud_cy = int(h * 0.42)
+
+    img = _draw_store_banner_base(
+        draw, img, w, h,
+        cloud_scale, cloud_cx, cloud_cy,
+        title_text="RETRO WEATHER",
+        title_scale=5,
+        title_x=int(w * 0.31),
+        title_y=int(h * 0.20),
+        subtitle_text="WEATHERSTAR 4000+ FOR ANDROID",
+        subtitle_scale=2,
+    )
+    img.save(output_path, 'PNG')
+    print(f"  Saved feature graphic 1024x500: {output_path}")
+
+
+def create_tv_store_banner(output_path):
+    """Create the 1280x720 Google Play TV banner."""
+    w, h = 1280, 720
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(img)
+
+    cloud_scale = 9.0
+    cloud_cx = int(w * 0.13)
+    cloud_cy = int(h * 0.43)
+
+    img = _draw_store_banner_base(
+        draw, img, w, h,
+        cloud_scale, cloud_cx, cloud_cy,
+        title_text="RETRO WEATHER",
+        title_scale=7,
+        title_x=int(w * 0.31),
+        title_y=int(h * 0.22),
+        subtitle_text="RETRO WEATHER ON YOUR TV",
+        subtitle_scale=3,
+    )
+    img.save(output_path, 'PNG')
+    print(f"  Saved TV store banner 1280x720: {output_path}")
 
 
 def main():
@@ -443,6 +589,13 @@ def main():
     banner_path = f"{base}/drawable/tv_banner.png"
     os.makedirs(os.path.dirname(banner_path), exist_ok=True)
     create_tv_banner(banner_path)
+
+    print("\nGenerating Play Store assets...")
+    store_dir = "/home/cyberrange/weatherstartv/store"
+    os.makedirs(store_dir, exist_ok=True)
+    create_icon(512, f"{store_dir}/icon-512.png")
+    create_feature_graphic(f"{store_dir}/feature-graphic.png")
+    create_tv_store_banner(f"{store_dir}/tv-banner.png")
 
     print("\nAll icons generated successfully!")
 
