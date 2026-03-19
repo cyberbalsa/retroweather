@@ -89,5 +89,11 @@ data class CrtPreset(
                 noiseStr = 0.15f, vignetteStr = 0.25f, maskType = 0, maskStr = 0.00f
             )
         )
+
+        init {
+            catalog.forEach { (key, preset) ->
+                require(key == preset.id) { "Catalog key '$key' does not match preset id '${preset.id}'" }
+            }
+        }
     }
 }
