@@ -195,8 +195,10 @@ class LocationBridge(
 
                 // Update JS label — JSON-encode to prevent injection
                 val escapedLabel = JSONObject.quote(preset.displayLabel)
-                webView.post {
-                    webView.evaluateJavascript("if(window.updateCrtLabel)window.updateCrtLabel($escapedLabel);", null)
+                if (!activity.isFinishing) {
+                    webView.post {
+                        webView.evaluateJavascript("if(window.updateCrtLabel)window.updateCrtLabel($escapedLabel);", null)
+                    }
                 }
             }
             .setNegativeButton("Cancel", null)
