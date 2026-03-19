@@ -25,14 +25,13 @@ class CrtOverlayView @JvmOverloads constructor(
     private val rng = Random()
 
     init {
-        // View is transparent by default; start hidden until a preset is chosen
-        visibility = GONE
+        isClickable = false
+        isFocusable = false
     }
 
     fun setPreset(p: CrtPreset) {
         preset = p
-        visibility = if (p.id == "none") GONE else VISIBLE
-        invalidate()
+        if (p.noiseStr > 0f || p.id != "none") invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
