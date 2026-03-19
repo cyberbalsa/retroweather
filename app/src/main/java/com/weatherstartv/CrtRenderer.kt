@@ -12,7 +12,6 @@ import javax.microedition.khronos.opengles.GL10
 class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     @Volatile private var preset: CrtPreset = CrtPreset.NONE
-    @Volatile private var presetDirty = true
     private var startTimeMs = System.currentTimeMillis()
 
     // GL handles
@@ -34,7 +33,6 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     fun setPreset(p: CrtPreset) {
         preset = p
-        presetDirty = true
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -47,6 +45,10 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val fragSrc = src.substringAfter("// ---FRAGMENT---").trim()
 
         program = buildProgram(vertSrc, fragSrc)
+        if (program == 0) {
+            android.util.Log.e("CrtRenderer", "Shader program failed to build; overlay disabled")
+            return
+        }
         GLES20.glUseProgram(program)
 
         // Cache uniform locations
@@ -93,16 +95,13 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val t = (System.currentTimeMillis() - startTimeMs) / 1000f
         GLES20.glUniform1f(uTime, t)
 
-        if (presetDirty) {
-            presetDirty = false  // clear FIRST so a concurrent setPreset() re-sets it
-            GLES20.glUniform1f(uScanlineStr,  p.scanlineStr)
-            GLES20.glUniform1f(uScanlineFreq, p.scanlineFreq)
-            GLES20.glUniform1f(uBloomStr,     p.bloomStr)
-            GLES20.glUniform1f(uNoiseStr,     p.noiseStr)
-            GLES20.glUniform1f(uVignetteStr,  p.vignetteStr)
-            GLES20.glUniform1i(uMaskType,     p.maskType)
-            GLES20.glUniform1f(uMaskStr,      p.maskStr)
-        }
+        GLES20.glUniform1f(uScanlineStr,  p.scanlineStr)
+        GLES20.glUniform1f(uScanlineFreq, p.scanlineFreq)
+        GLES20.glUniform1f(uBloomStr,     p.bloomStr)
+        GLES20.glUniform1f(uNoiseStr,     p.noiseStr)
+        GLES20.glUniform1f(uVignetteStr,  p.vignetteStr)
+        GLES20.glUniform1i(uMaskType,     p.maskType)
+        GLES20.glUniform1f(uMaskStr,      p.maskStr)
 
         // Draw fullscreen quad
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, quadVbo)
@@ -132,17 +131,24 @@ class CrtRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private fun buildProgram(vertSrc: String, fragSrc: String): Int {
         val vert = compileShader(GLES20.GL_VERTEX_SHADER, vertSrc)
         val frag = compileShader(GLES20.GL_FRAGMENT_SHADER, fragSrc)
+        if (vert == 0 || frag == 0) {
+            if (vert != 0) GLES20.glDeleteShader(vert)
+            if (frag != 0) GLES20.glDeleteShader(frag)
+            return 0
+        }
         val prog = GLES20.glCreateProgram()
         GLES20.glAttachShader(prog, vert)
         GLES20.glAttachShader(prog, frag)
         GLES20.glLinkProgram(prog)
+        GLES20.glDeleteShader(vert)
+        GLES20.glDeleteShader(frag)
         val status = IntArray(1)
         GLES20.glGetProgramiv(prog, GLES20.GL_LINK_STATUS, status, 0)
         if (status[0] == 0) {
             android.util.Log.e("CrtRenderer", "Program link error: ${GLES20.glGetProgramInfoLog(prog)}")
+            GLES20.glDeleteProgram(prog)
+            return 0
         }
-        GLES20.glDeleteShader(vert)
-        GLES20.glDeleteShader(frag)
         return prog
     }
 }
