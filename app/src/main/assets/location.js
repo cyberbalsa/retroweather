@@ -61,7 +61,14 @@
         if (window.Android && window.Android.saveLocation) {
             window.Android.saveLocation(lat, lon);
         }
-        window.location.reload();
+        // Use native bridge reload — window.location.reload() is unreliable when
+        // called from within an evaluateJavascript execution context (e.g. onLocationResult
+        // callback fires via LocationBridge.evaluateJavascript), same as applySettings().
+        if (window.Android && window.Android.requestReload) {
+            window.Android.requestReload();
+        } else {
+            window.location.reload();
+        }
     }
 
     function tryIpGeoUrl(url, extractFn, onFail) {

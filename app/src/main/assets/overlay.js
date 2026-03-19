@@ -7,6 +7,10 @@
     var pressTimer = null;
     var pressing = false;
 
+    // Keyboard long-press state (TV remote OK/select fires Enter, keyCode 13)
+    var keyLongPressTimer = null;
+    var enterDown = false;
+
     function isInsideBackdrop(el) {
         // Element.closest() not in Chrome 30 — walk parents manually
         while (el) {
@@ -14,6 +18,11 @@
             el = el.parentElement || el.parentNode;
         }
         return false;
+    }
+
+    function isSettingsOpen() {
+        var bd = document.getElementById('kiosk-backdrop');
+        return bd && bd.className.indexOf('open') !== -1;
     }
 
     function startPress(target) {
@@ -39,6 +48,38 @@
     document.addEventListener('mousedown', function (e) { startPress(e.target); });
     document.addEventListener('mouseup',   cancelPress);
     document.addEventListener('mousemove', cancelPress);
+
+    // Keyboard events — TV remote D-pad / directional keys
+    document.addEventListener('keydown', function (e) {
+        var key = e.keyCode || e.which;
+
+        // Prevent arrow keys from scrolling the WebView or triggering Android TV
+        // system focus UI (the "weird box") when the settings overlay is closed.
+        // Allow arrow keys through when settings is open so form elements are navigable.
+        if (!isSettingsOpen() && (key === 37 || key === 38 || key === 39 || key === 40)) {
+            e.preventDefault();
+        }
+
+        // Long-press Enter to open settings. Track first keydown only (not auto-repeat).
+        // e.repeat is unreliable on older WebViews — use enterDown flag instead.
+        if (key === 13 && !enterDown && !isSettingsOpen()) {
+            enterDown = true;
+            keyLongPressTimer = setTimeout(function () {
+                keyLongPressTimer = null;
+                if (window.openKioskSettings) window.openKioskSettings();
+            }, 600);
+        }
+    });
+
+    document.addEventListener('keyup', function (e) {
+        if ((e.keyCode || e.which) === 13) {
+            enterDown = false;
+            if (keyLongPressTimer) {
+                clearTimeout(keyLongPressTimer);
+                keyLongPressTimer = null;
+            }
+        }
+    });
 
     // Bootstrap order: settings creates DOM first, then location and music
     if (window.initSettings) window.initSettings();

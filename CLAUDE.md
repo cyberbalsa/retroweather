@@ -173,3 +173,162 @@ The app is also configured for Android TV (`LEANBACK_LAUNCHER`) while remaining 
 - **`npm ci` requires `package-lock.json`** — it's committed; don't delete it.
 - **ES5 only in JS assets** — no arrow functions, `const`/`let`, template literals, etc. Run `npm run lint` to check.
 - **`app/build.gradle` has no `signingConfig`** — this is intentional. Local release builds are unsigned. Don't add one.
+
+---
+
+## Overlay System (Our Custom JS Layer)
+
+The four JS assets are injected by `KioskWebViewClient.onPageFinished` into ws4kp's page context after every load. They run in dependency order:
+
+```
+location.js   → GPS/IP geo detection, exposes onLocationResult/onLocationError
+music.js      → Archive.org retro music playback state machine
+settings.js   → Settings overlay UI, exposes window.openKioskSettings
+overlay.js    → Bootstraps the above three; handles long-press and D-pad key events
+```
+
+**Injection guard** (`KioskWebViewClient.kt`): The combined script is wrapped in:
+```js
+(function(){if(window.__kioskOK||!document.head)return;window.__kioskOK=true; ... })()
+```
+- `window.__kioskOK` prevents double-injection when `onPageFinished` fires multiple times for the same JS context (hash changes, sub-resource callbacks).
+- `!document.head` prevents injection if the DOM isn't ready yet — `onPageFinished` can fire before the DOM is fully parsed on reloads. Without this guard, the scripts crash setting `__kioskOK=true` and the next (real) `onPageFinished` call silently skips injection.
+
+**Reloading after settings apply**: Use `window.Android.requestReload()` (native bridge), NOT `window.location.reload()`. JS-initiated reloads called from within an `evaluateJavascript` execution context are unreliable on Android WebView — they can silently fail or complete without reinitializing the overlay.
+
+---
+
+## Android TV / Remote Control Handling
+
+The device is a NVIDIA Shield TV. All remote input comes as D-pad key events, not mouse/touch.
+
+### Key event architecture
+- **D-pad LEFT/RIGHT/UP/DOWN** → `keydown` events (keyCodes 37/38/39/40) in the WebView
+- **OK/Select/Center** → `keydown` keyCode 13 (Enter)
+- **Back button** → handled natively by `Activity.onBackPressed()` before WebView JS ever sees it
+
+### What we handle and where
+
+| Input | Handler | What it does |
+|-------|---------|--------------|
+| Long-press OK (600ms) | `overlay.js` keydown | Opens settings overlay |
+| D-pad LEFT/RIGHT/UP/DOWN | `overlay.js` keydown | `preventDefault()` when settings closed — prevents WebView scrolling and Android TV system UI popups |
+| D-pad in settings | `overlay.js` keydown | Arrow keys pass through when `isSettingsOpen()` — allows form navigation |
+| Volume slider UP/DOWN | `settings.js` keydown on `#k-vol` | Blocked at native WebView level; use ± buttons instead (range inputs trap D-pad focus on Android TV) |
+| Back button | `MainActivity.onBackPressed()` | Calls `window.kioskHandleBack()` via evaluateJavascript; saves+closes settings if open, no-op otherwise |
+
+### Long-press detection
+`overlay.js` tracks `enterDown` flag (not `e.repeat` — unreliable on older WebViews) and fires a 600ms timer. Cancels on keyup.
+
+### TV-hostile form elements
+- `input[type=range]` — **never use in the D-pad nav flow**. Android TV WebView handles arrow keys at native level before JS can `preventDefault()`. Replace with +/- buttons and a hidden range input.
+- `select` elements — fine, D-pad navigates them normally.
+- `tabindex="-1"` removes elements from D-pad focus order entirely.
+
+---
+
+## Settings System
+
+### Two-layer param architecture
+Settings live in the page URL as query params. There are two namespaces:
+
+**Our kiosk params** (managed by settings.js/location.js/music.js):
+```
+kiosk_music=1         kiosk_vol=0.7      kiosk_shuffle=1
+kiosk_loc_mode=auto   kiosk_ipgeo=1
+```
+These use `1`/`0` for booleans.
+
+**ws4kp params** (passed through to ws4kp's own settings system):
+```
+settings-wide-checkbox=true       settings-units-select=us
+settings-speed-select=1.0         settings-scanLines-checkbox=false
+settings-scanLineMode-select=auto settings-kiosk-checkbox=true
+settings-customFeedEnable-checkbox=true
+settings-customFeed-string=<url>
+```
+These use `true`/`false` for booleans (ws4kp reads them via its own `parseQueryString()`).
+
+**Display screen toggles** (ws4kp, default `true` when absent):
+```
+current-weather-checkbox    latest-observations-checkbox
+hourly-checkbox             hourly-graph-checkbox
+local-forecast-checkbox     extended-forecast-checkbox
+regional-forecast-checkbox  travel-checkbox
+almanac-checkbox            hazards-checkbox
+spc-outlook-checkbox        radar-checkbox
+```
+
+### How params flow
+1. `MainActivity.buildInitialUrl()` builds the first URL with kiosk defaults
+2. User opens settings → `populateForm()` reads current URL params via `getParam()`
+3. User applies → `applySettings()` writes all params via `setParam()` (uses `history.replaceState()`)
+4. `window.Android.requestReload()` triggers native `webView.reload()`
+5. ws4kp reads its params from the new URL on the fresh page load
+
+### Default feed
+Custom feed defaults to enabled with `https://news.kagi.com/tech.xml`. Both the JS default in `readParams()` and the initial URL in `buildInitialUrl()` must be kept in sync.
+
+### Settings modal focus
+On open, focus is set to `#kiosk-modal` (which has `tabindex="-1"`), NOT to any interactive element. This is intentional — the Enter keyup from the long-press that opened the modal would otherwise immediately trigger the focused button.
+
+---
+
+## Debugging
+
+### Device connection
+The Shield TV is connected via ADB TCP. It shows up as `127.0.0.1:5556` (not localhost:5555).
+```bash
+adb devices                          # verify connection
+adb -s 127.0.0.1:5556 logcat ...    # always specify -s
+```
+
+### Build and deploy cycle
+```bash
+./gradlew assembleDebug && adb -s 127.0.0.1:5556 install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Reading logs
+```bash
+# All JS console output + errors for the app
+adb -s 127.0.0.1:5556 logcat -d --pid=$(adb -s 127.0.0.1:5556 shell pidof com.weatherstartv) \
+  | grep -E "chromium|KioskProxy|LocationBridge"
+```
+
+Key log patterns to watch for:
+
+| Log message | Meaning |
+|-------------|---------|
+| `[overlay] WeatherStar Kiosk overlay ready` | Overlay scripts injected successfully |
+| `[location] Coords already set, skipping detection` | Location loaded from saved prefs |
+| `Applying deferred DOM settings: wide,kiosk` | ws4kp page initialized (from ws.min.js) |
+| `Uncaught TypeError: Cannot read properties of null (reading 'appendChild')` | `onPageFinished` fired before DOM ready — overlay injection skipped this cycle, will retry |
+| `KioskProxy: Proxying: ...` | External request being proxied (archive.org, ipinfo.io) |
+| `LocationBridge: Location unavailable, falling back to IP geo` | GPS unavailable, using IP |
+
+### The `onPageFinished` double-fire issue
+`onPageFinished` in Android WebView fires multiple times per navigation:
+1. Once early (before DOM is fully parsed) — `document.head` is null, scripts would crash
+2. Once when truly finished — DOM is ready, injection succeeds
+
+The `!document.head` guard in the injection wrapper handles this. If you ever see the `appendChild` null error in logs, the overlay will still initialize on the subsequent fire. If you see ws4kp messages (`Applying deferred DOM settings`, `Wake Lock active`) but NO `[overlay] WeatherStar Kiosk overlay ready`, the guard is broken — check `KioskWebViewClient.onPageFinished`.
+
+### ws4kp source maps
+`ws.min.js.map` is bundled and contains the original source for all 56 modules. To read a specific module:
+```python
+import json
+data = json.load(open('app/src/main/assets/ws4kp/resources/ws.min.js.map'))
+sources = data['sources']
+contents = data['sourcesContent']
+# find index of module by name, then print contents[index]
+```
+Useful modules: `settings.mjs`, `weatherdisplay.mjs`, `navigation.mjs`, `utils/setting.mjs`
+
+### Console error line numbers
+JS errors attributed to `ws4kp/index.html` at e.g. line 747 are actually errors in our **injected overlay scripts**. The combined script line maps roughly as:
+- Lines 1–288: `location.js`
+- Lines 289–440: `music.js`
+- Lines 441–924: `settings.js`
+- Lines 925+: `overlay.js`
+
+(Exact offsets shift with file edits — use `wc -l` to recalculate.)
