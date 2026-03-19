@@ -26,8 +26,9 @@ app/src/main/res/raw/
 ```
 MainActivity.kt           — adds CrtOverlayView, wires preset load from SharedPreferences,
                             wires settings persistence fix
-KioskWebViewClient.kt     — (or new KioskBridge.kt) adds @JavascriptInterface methods:
-                            showCrtPicker(), saveSettings(queryString)
+LocationBridge.kt         — adds @JavascriptInterface methods: showCrtPicker(), saveSettings(queryString).
+                            LocationBridge already holds an Activity reference — use it rather than
+                            KioskWebViewClient (which only holds Context and cannot show AlertDialog).
 app/src/main/res/layout/  — FrameLayout wrapping WebView + CrtOverlayView
 settings.js               — replaces scan lines rows with CRT row + Pick… button;
                             adds saveSettings() call in applySettings();
@@ -46,7 +47,7 @@ settings.js               — replaces scan lines rows with CRT row + Pick… bu
 ```
 
 `CrtOverlayView` uses:
-- `setZOrderOnTop(true)` — renders above WebView via SurfaceFlinger
+- `setZOrderMediaOverlay(true)` — places GL surface in the media overlay plane, above the WebView Surface but below system overlays. **Do NOT use `setZOrderOnTop(true)`** — that makes the SurfaceFlinger layer opaque regardless of EGL alpha config, blacking out the WebView.
 - `setEGLConfigChooser(8, 8, 8, 8, 16, 0)` — 8-bit alpha channel
 - `holder.setFormat(PixelFormat.RGBA_8888)` — transparent background
 
@@ -166,13 +167,33 @@ window.updateCrtLabel = function(label) {
 };
 ```
 
-On `populateForm()`: read label from a global `window.__crtLabel` set by native before the form opens, or default to `'None'`.
+On `populateForm()`: read the current label from `document.getElementById('k-crt-label').textContent` directly — the element's text is kept current by `window.updateCrtLabel()` calls from native. No separate `window.__crtLabel` global needed. The element exists from page load because `initSettings()` (called at overlay bootstrap) injects the full HTML including `#k-crt-label`.
+
+To set the initial label on startup (before any user interaction), `KioskWebViewClient.onPageFinished` prepends a one-liner to the combined injection script:
+
+```js
+window.__initialCrtLabel = 'Composite \u00b7 Warm';  // native reads pref and injects this value
+```
+
+`settings.js` `initSettings()` reads `window.__initialCrtLabel` and sets `#k-crt-label` on init.
 
 ---
 
 ## Settings UI — Native Side
 
 ### `showCrtPicker()` — JS Bridge Method
+
+New methods are added to `LocationBridge.kt`. `LocationBridge` already holds both an `Activity` reference (needed for `AlertDialog`) and a `WebView` reference (needed for `evaluateJavascript`). Add `CrtOverlayView` as a third constructor parameter:
+
+```kotlin
+class LocationBridge(
+    private val activity: Activity,
+    private val webView: WebView,
+    private val crtOverlay: CrtOverlayView   // NEW
+) { ... }
+```
+
+`MainActivity` passes `crtOverlayView` when constructing `LocationBridge`.
 
 ```kotlin
 @JavascriptInterface
@@ -187,8 +208,9 @@ fun showCrtPicker() {
 
 On selection:
 1. Save `presetId` to `SharedPreferences("kiosk_prefs", "crt_preset")`
-2. Call `crtOverlayView.setPreset(CrtPreset.catalog[presetId])`  — immediate visual update, no reload
-3. Call `webView.evaluateJavascript("window.updateCrtLabel('${preset.displayLabel}')", null)`
+2. Call `crtOverlay.setPreset(CrtPreset.catalog[presetId])`  — immediate visual update, no reload
+3. Call `webView.evaluateJavascript("window.updateCrtLabel(${JSONObject.quote(preset.displayLabel)})", null)`
+   — `JSONObject.quote()` escapes the label into a safe JSON string literal, preventing JS injection.
 
 ### Preset Load on Startup
 
@@ -213,11 +235,17 @@ if (window.Android && window.Android.saveSettings) {
 }
 ```
 
-Native — new `@JavascriptInterface`:
+Native — new `@JavascriptInterface` in `LocationBridge.kt`. Strip `latLon` from the saved query before persisting — otherwise a stale GPS coordinate baked into the URL would suppress location re-detection on every subsequent app start (because `location.js` sees `latLon` in the URL and skips detection entirely):
+
 ```kotlin
 @JavascriptInterface
 fun saveSettings(queryString: String) {
-    prefs.edit().putString("saved_query", queryString).apply()
+    // Strip latLon so location.js can re-detect on the next boot.
+    // latLon is managed by the location system, not the settings form.
+    val stripped = queryString
+        .replace(Regex("[?&]latLon=[^&]*"), "")
+        .trimStart('&').let { if (it.isNotEmpty() && it[0] != '?') "?$it" else it }
+    prefs.edit().putString("saved_query", stripped).apply()
 }
 ```
 
@@ -225,7 +253,8 @@ fun saveSettings(queryString: String) {
 ```kotlin
 val saved = prefs.getString("saved_query", null)
 val url = if (saved != null) {
-    "file:///android_asset/ws4kp/index.html$saved"
+    // Must use the same HTTPS origin as buildInitialUrl() — WebView blocks fetch() on file:// origins.
+    "https://appassets.androidplatform.net/assets/ws4kp/index.html$saved"
 } else {
     buildInitialUrl()  // first-run defaults
 }
@@ -234,12 +263,50 @@ webView.loadUrl(url)
 
 ---
 
-## Removed
+## Changes Required (Pending Implementation)
 
-- `settings-scanLines-checkbox` URL param
-- `settings-scanLineMode-select` URL param
-- `k-scanlines` checkbox and `k-scanline-mode-row` select from `settings.js` HTML/JS
-- `scanLines` and `scanLineMode` fields from `readParams()` and `applySettings()`
+### `settings.js` — remove scan lines, add CRT row
+
+These changes are **not yet made** to `settings.js`. All changes are JS-only; no Kotlin is needed for these removals since the scan lines params were never written by `buildInitialUrl()` or any native code.
+
+Remove from HTML string: `k-scanlines` checkbox row and `k-scanline-mode-row` select block.
+
+Remove from JS:
+- `scanlinesChk`, `scanModeRow`, `scanModeSelect` variable declarations
+- `scanlinesChk.addEventListener('change', ...)` block
+- `scanLines`/`scanLineMode` fields from `readParams()`
+- `setParam('settings-scanLines-checkbox', ...)` and `setParam('settings-scanLineMode-select', ...)` from `applySettings()`
+- `scanlinesChk.checked` and `scanModeSelect.value` reads from `populateForm()`
+
+Add to HTML string (in Appearance section):
+```html
+<div class="k-row">
+  <label>CRT Shader</label>
+  <span id="k-crt-label" style="font-size:0.82em;color:#7cb9e8;flex:1;margin-left:8px;">None</span>
+  <button id="k-crt-pick" class="k-btn-sm" tabindex="0">Pick\u2026</button>
+</div>
+```
+
+Add to `initSettings()`:
+- Wire `k-crt-pick` click → `window.Android.showCrtPicker()`
+- Read `window.__initialCrtLabel` and set `#k-crt-label` on init
+
+Add to `applySettings()` before `requestReload()`:
+```js
+if (window.Android && window.Android.saveSettings) {
+    window.Android.saveSettings(window.location.search);
+}
+```
+
+Expose globally:
+```js
+window.updateCrtLabel = function(label) {
+    var el = document.getElementById('k-crt-label');
+    if (el) el.textContent = label || 'None';
+};
+```
+
+Note on `window.__initialCrtLabel`: This is prepended **outside** the `__kioskOK` IIFE guard in `KioskWebViewClient.onPageFinished`, so it is set on every `onPageFinished` call (including the early DOM-not-ready fire). This ensures `initSettings()` always sees the correct initial label regardless of which `onPageFinished` call successfully completes injection.
 
 ---
 
