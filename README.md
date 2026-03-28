@@ -45,6 +45,10 @@ To sideload:
 adb install weatherstarkiosk-1.0-signed.apk
 ```
 
+## Beta Testing
+
+We're looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
+
 ## Credits
 
 Based on [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) by netbymatt — MIT License.
