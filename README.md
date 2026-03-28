@@ -18,6 +18,10 @@ The app is currently in closed testing on Google Play — I need more testers be
 |---|---|
 | ![Local Forecast](screenshots/local-forecast.png) | ![Extended Forecast](screenshots/extended-forecast.png) |
 
+| Settings (top) | Settings (bottom) |
+|---|---|
+| ![Settings](screenshots/settings.png) | ![Settings 2](screenshots/settings-2.png) |
+
 ## Features
 
 - Full-screen WeatherStar 4000+ weather display with retro animations
