@@ -4,9 +4,9 @@ An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/ne
 
 ![WeatherStar Kiosk banner](app/src/main/res/drawable/tv_banner.png)
 
-## Beta Testing
+## Install via Play Store
 
-I'm looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
+The app is currently in closed testing on Google Play — I need more testers before Google will allow a production release. If you'd like to help out and install from the Play Store, see [TESTING.md](TESTING.md) to join.
 
 ## Screenshots
 
