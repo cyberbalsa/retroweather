@@ -98,11 +98,6 @@
         + '<option value="0.5">Very Fast</option><option value="0.75">Fast</option>'
         + '<option value="1.0">Normal</option><option value="1.25">Slow</option><option value="1.5">Very Slow</option>'
         + '</select></div>'
-        + '<div class="k-row">'
-        + '<label for="k-crt-pick">CRT Shader</label>'
-        + '<span id="k-crt-label" style="font-size:0.82em;color:#7cb9e8;-webkit-flex:1;flex:1;margin-left:8px;">None</span>'
-        + '<button id="k-crt-pick" class="k-btn-sm" tabindex="0">Pick\u2026</button>'
-        + '</div>'
         + '</div>'
 
         // ── Music ─────────────────────────────────────────────────────────────
@@ -138,8 +133,6 @@
         + 'Based on <a href="https://github.com/netbymatt/ws4kp" target="_blank" class="k-link">WeatherStar 4000+</a>'
         + ' by netbymatt</p>'
         + '<p style="font-size:0.8em;margin:0 0 0;">'
-        + 'CRT shaders inspired by <a href="https://github.com/RetroCrisis/Retro-Crisis-GDV-NTSC" target="_blank" class="k-link">Retro Crisis GDV-NTSC</a>'
-        + ' by RetroCrisis</p>'
         + '</div>'
 
         + '<button id="kiosk-apply" tabindex="0">Apply</button>'
@@ -322,14 +315,6 @@
         var wideCheck    = document.getElementById('k-wide');
         var unitsSelect  = document.getElementById('k-units');
         var speedSelect  = document.getElementById('k-speed');
-        var crtPickBtn   = document.getElementById('k-crt-pick');
-        var crtLabel     = document.getElementById('k-crt-label');
-
-        // Set initial label from native-injected value (set by KioskWebViewClient.onPageFinished)
-        if (window.__initialCrtLabel) {
-            crtLabel.textContent = window.__initialCrtLabel;
-        }
-
         var feedEnableChk  = document.getElementById('k-feed-enable');
         var feedUrlInput   = document.getElementById('k-feed-url');
         var applyBtn     = document.getElementById('kiosk-apply');
@@ -394,12 +379,6 @@
                 manualRow.style.display = (ch && ch.value === 'manual') ? '-webkit-box' : 'none';
             });
         }
-
-        crtPickBtn.addEventListener('click', function () {
-            if (window.Android && window.Android.showCrtPicker) {
-                window.Android.showCrtPicker();
-            }
-        });
 
         function setVol(pct) {
             pct = Math.max(0, Math.min(100, pct));
@@ -476,10 +455,6 @@
         // Called by native onBackPressed — save+close if open, no-op otherwise
         window.kioskHandleBack = function () {
             if (backdrop.className.indexOf('open') !== -1) applyBtn.click();
-        };
-        window.updateCrtLabel = function (label) {
-            var el = document.getElementById('k-crt-label');
-            if (el) el.textContent = label || 'None';
         };
     }
 

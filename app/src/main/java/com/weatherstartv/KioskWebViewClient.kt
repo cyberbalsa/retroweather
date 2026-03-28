@@ -119,21 +119,11 @@ class KioskWebViewClient(private val context: Context) : WebViewClient() {
     override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
 
-        // Read current CRT preset label from SharedPreferences.
-        // Injected OUTSIDE the __kioskOK guard so it is always set,
-        // even on early fires where the DOM isn't ready yet.
-        val prefs = context.getSharedPreferences(LocationBridge.PREFS, Context.MODE_PRIVATE)
-        val presetId = prefs.getString("crt_preset", "none") ?: "none"
-        val preset = CrtPreset.catalog[presetId] ?: CrtPreset.NONE
-        val escapedLabel = org.json.JSONObject.quote(preset.displayLabel)
-        val initLabel = "window.__initialCrtLabel=$escapedLabel;"
-
         val combined = assetFiles.joinToString("\n;\n") { filename ->
             context.assets.open(filename).bufferedReader().readText()
         }
         view.evaluateJavascript(
-            // __initialCrtLabel is set unconditionally before the guard
-            "$initLabel\n(function(){if(window.__kioskOK||!document.head||!document.body)return;window.__kioskOK=true;\n$combined\n})()",
+            "(function(){if(window.__kioskOK||!document.head||!document.body)return;window.__kioskOK=true;\n$combined\n})()",
             null
         )
     }

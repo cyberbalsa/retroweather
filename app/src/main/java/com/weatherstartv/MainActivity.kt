@@ -17,7 +17,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var locationBridge: LocationBridge
-    private lateinit var crtOverlayView: CrtOverlayView
     private lateinit var insetsController: WindowInsetsControllerCompat
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -38,20 +37,14 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webview)
 
-        crtOverlayView = findViewById(R.id.crtOverlay)
-
-        // Load saved CRT preset from SharedPreferences
-        val prefs = getSharedPreferences(LocationBridge.PREFS, MODE_PRIVATE)
-        val savedPresetId = prefs.getString("crt_preset", "none") ?: "none"
-        crtOverlayView.setPreset(CrtPreset.catalog[savedPresetId] ?: CrtPreset.NONE)
-
         configureWebView()
 
-        locationBridge = LocationBridge(this, webView, crtOverlayView)
+        locationBridge = LocationBridge(this, webView)
         webView.addJavascriptInterface(locationBridge, "Android")
         webView.webViewClient = KioskWebViewClient(this)
 
         if (savedInstanceState == null) {
+            val prefs = getSharedPreferences(LocationBridge.PREFS, MODE_PRIVATE)
             val savedQuery = prefs.getString("saved_query", null)
             val url = if (savedQuery != null) {
                 // Must use the HTTPS appassets origin — fetch() is blocked on file:// origins
@@ -100,16 +93,6 @@ class MainActivity : AppCompatActivity() {
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
         webView.restoreState(savedInstanceState)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        crtOverlayView.onResume()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        crtOverlayView.onPause()
     }
 
     private fun hideSystemBars() {
