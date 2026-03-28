@@ -7,3 +7,4 @@ local.properties
 .superpowers/
 node_modules/
 releases-signed/
+CLAUDE.md
