@@ -1,12 +1,12 @@
 # Retro Weather
 
-An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) retro weather experience full-screen on a TV or tablet — no interaction required.
+An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) retro weather experience full-screen on a TV or tablet - no interaction required.
 
 ![Retro Weather banner](app/src/main/res/drawable/tv_banner.png)
 
 ## Install via Play Store
 
-The app is currently in closed testing on Google Play — I need more testers before Google will allow a production release. If you'd like to help out and install from the Play Store, see [TESTING.md](TESTING.md) to join.
+The app is currently in closed testing on Google Play - I need more testers before Google will allow a production release. If you'd like to help out and install from the Play Store, see [TESTING.md](TESTING.md) to join.
 
 ## Screenshots
 
@@ -55,7 +55,7 @@ adb install weatherstarkiosk-1.0-signed.apk
 
 ## Credits
 
-Based on [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) by netbymatt — MIT License.
+Based on [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) by netbymatt - MIT License.
 Music from the [Weatherscan Complete Collection](https://archive.org/details/weatherscancompletecollection) on the Internet Archive.
 IP geolocation by [ipinfo.io](https://ipinfo.io) and [ipapi.co](https://ipapi.co) when GPS is unavailable.
 
