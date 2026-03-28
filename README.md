@@ -4,6 +4,10 @@ An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/ne
 
 ![WeatherStar Kiosk banner](app/src/main/res/drawable/tv_banner.png)
 
+## Beta Testing
+
+I'm looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
+
 ## Screenshots
 
 | Current Conditions | Regional Observations |
@@ -44,10 +48,6 @@ To sideload:
 ```
 adb install weatherstarkiosk-1.0-signed.apk
 ```
-
-## Beta Testing
-
-I'm looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
 
 ## Credits
 
