@@ -95,6 +95,31 @@ class MainActivity : AppCompatActivity() {
         webView.restoreState(savedInstanceState)
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Pause music when app loses focus
+        webView.evaluateJavascript(
+            "if(window.musicSetEnabled)window.musicSetEnabled(false);",
+            null
+        )
+        // Freeze WebView: stops all JS timers (halts ws4kp canvas animation)
+        webView.onPause()
+        webView.pauseTimers()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Unfreeze WebView: resumes JS timers and canvas animation
+        webView.resumeTimers()
+        webView.onResume()
+        // Resume music
+        webView.evaluateJavascript(
+            "if(window.musicSetEnabled)window.musicSetEnabled(true);",
+            null
+        )
+        hideSystemBars()
+    }
+
     private fun hideSystemBars() {
         insetsController.hide(WindowInsetsCompat.Type.systemBars())
     }
