@@ -1,8 +1,8 @@
-# WeatherStar Kiosk
+# Retro Weather
 
 An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) retro weather experience full-screen on a TV or tablet — no interaction required.
 
-![WeatherStar Kiosk banner](app/src/main/res/drawable/tv_banner.png)
+![Retro Weather banner](app/src/main/res/drawable/tv_banner.png)
 
 ## Install via Play Store
 
