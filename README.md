@@ -47,11 +47,12 @@ adb install weatherstarkiosk-1.0-signed.apk
 
 ## Beta Testing
 
-We're looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
+I'm looking for beta testers! If you'd like to try the latest builds before they hit the Play Store, see [TESTING.md](TESTING.md) for how to join the closed test.
 
 ## Credits
 
 Based on [WeatherStar 4000+](https://github.com/netbymatt/ws4kp) by netbymatt — MIT License.
+Music from the [Weatherscan Complete Collection](https://archive.org/details/weatherscancompletecollection) on the Internet Archive.
 IP geolocation by [ipinfo.io](https://ipinfo.io) and [ipapi.co](https://ipapi.co) when GPS is unavailable.
 
 ## Build
