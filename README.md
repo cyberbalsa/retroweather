@@ -4,6 +4,16 @@ An Android kiosk app that displays the [WeatherStar 4000+](https://github.com/ne
 
 ![WeatherStar Kiosk banner](app/src/main/res/drawable/tv_banner.png)
 
+## Screenshots
+
+| Current Conditions | Regional Observations |
+|---|---|
+| ![Current Conditions](screenshots/current-conditions.png) | ![Regional Observations](screenshots/regional-observations.png) |
+
+| Local Forecast | Extended Forecast |
+|---|---|
+| ![Local Forecast](screenshots/local-forecast.png) | ![Extended Forecast](screenshots/extended-forecast.png) |
+
 ## Features
 
 - Full-screen WeatherStar 4000+ weather display with retro animations
